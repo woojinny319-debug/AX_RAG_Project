@@ -1,0 +1,46 @@
+# 환경 변수 및 API 키 (절대 커밋 금지)
+.env
+*.env
+RAG_Project_Open AI API_KEY.txt
+
+# ChromaDB 벡터 저장소
+chroma_db/
+
+# Python 캐시
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# PDF 원본 파일 (용량 큰 이진 파일)
+*.pdf
+
+# Streamlit 로그
+streamlit.log
+.streamlit/
+
+# 이미지
+*.png
+*.jpg
+*.jpeg
+
+# 옵시디언 노트 앱 설정
+.obsidian/
+Samil_AX Node/
+
+# 임시/작업 파일
+plan.md
+verify_app.py
+export_for_notion/
+utils/
+2026-05-25.md
+
+# OS 파일
+.DS_Store
+Thumbs.db
+desktop.ini

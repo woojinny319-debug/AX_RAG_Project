@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(pip install streamlit beautifulsoup4 rank-bm25 2>&1)"
+    ]
+  }
+}
