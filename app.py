@@ -1,5 +1,3 @@
-"""AX RAG — 제약·바이오 회계처리 AI 어시스턴트 (Streamlit 메인)."""
-
 from __future__ import annotations
 
 import os
