@@ -1,5 +1,3 @@
-"""ChromaDB 초기화, Hybrid Search, 컬렉션 관리."""
-
 from __future__ import annotations
 
 import time
