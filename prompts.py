@@ -1,5 +1,3 @@
-"""시스템 프롬프트 및 출력 포맷 정의."""
-
 from langchain_core.documents import Document
 
 # source 메타데이터 → 표시 이름 매핑
