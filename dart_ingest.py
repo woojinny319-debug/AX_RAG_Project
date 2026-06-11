@@ -1,15 +1,3 @@
-"""DART 공시 뷰어 스크래핑 → HTML 파싱 → ChromaDB 'dart' 컬렉션 저장.
-
-document.json(ZIP) 대신 DART 뷰어 좌측 패널 트리를 파싱하여
-viewer.do 엔드포인트로 부모 주석 섹션을 통째로 수집합니다.
-
-실행 방법:
-    python dart_ingest.py
-
-사전 조건:
-    .env 파일에 DART_API_KEY 와 OPENAI_API_KEY 설정 필요.
-"""
-
 from __future__ import annotations
 
 import io
@@ -186,17 +174,13 @@ def _parse_doc_nodes(left_html: str) -> list[DocNode]:
 
 
 def _find_notes_parent_node(nodes: list[DocNode]) -> DocNode | None:
-    """주석 전체를 포괄하는 부모 노드를 찾는다.
-
-    DART 문서 구조: '재무제표 주석' 헤더 바로 다음에 오는 '일반사항' 노드가
-    모든 주석 섹션의 부모 역할을 하며 length가 가장 크다.
-    """
-    # 1순위: '일반사항'이면서 length > 500_000 인 노드
+   
+   
     for node in nodes:
         if "일반사항" in node.title and node.length_int > 500_000:
             return node
 
-    # 2순위: '주석' 헤더 이후 첫 번째 large node
+  
     after_jujuk = False
     for node in nodes:
         if "주석" in node.title and node.length_int < 200_000:
@@ -205,7 +189,6 @@ def _find_notes_parent_node(nodes: list[DocNode]) -> DocNode | None:
         if after_jujuk and node.length_int > 500_000:
             return node
 
-    # 3순위: 전체에서 가장 큰 length 중 주석 관련 노드
     candidates = [n for n in nodes if "주석" in n.title or "일반사항" in n.title]
     if candidates:
         return max(candidates, key=lambda n: n.length_int)
@@ -214,7 +197,7 @@ def _find_notes_parent_node(nodes: list[DocNode]) -> DocNode | None:
 
 
 def _fetch_section_text(rcp_no: str, node: DocNode) -> str:
-    """viewer.do로 노드 HTML을 가져와 텍스트 반환."""
+
     url = f"{DART_VIEWER_BASE}/report/viewer.do"
     params: dict[str, str] = {
         "rcpNo": rcp_no,
@@ -274,10 +257,7 @@ _SECTION_HEADING_RE = re.compile(
 
 
 def _extract_topic_chunk(full_text: str, topic: str) -> str:
-    """전체 주석 텍스트에서 특정 주제와 관련된 단락을 추출한다.
 
-    LLM에 전달하기 전에 관련 단락만 슬라이싱하여 토큰을 절감한다.
-    """
     topic_keywords: dict[str, list[str]] = {
         "연구개발비 자산화": ["연구개발", "개발비", "자산화", "임상"],
         "무형자산 인식 및 상각": ["무형자산", "상각", "내용연수"],
