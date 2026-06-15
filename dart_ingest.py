@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -33,12 +34,47 @@ DART_VIEWER_BASE = "https://dart.fss.or.kr"
 CHROMA_DIR = str(BASE_DIR / "chroma_db")
 COLLECTION = "dart"
 
-TARGET_COMPANIES: list[tuple[str, str]] = [
-    ("207940", "삼성바이오로직스"),
-    ("068270", "셀트리온"),
-    ("128940", "한미약품"),
-    ("000100", "유한양행"),
-    ("185750", "종근당"),
+
+@dataclass(frozen=True)
+class TargetCompany:
+    company_name: str
+    stock_code: str | None = None
+    aliases: tuple[str, ...] = ()
+
+
+TARGET_COMPANIES: list[TargetCompany] = [
+    TargetCompany("삼성바이오로직스", "207940"),
+    TargetCompany("셀트리온", "068270"),
+    TargetCompany("한미약품", "128940"),
+    TargetCompany("유한양행", "000100"),
+    TargetCompany("종근당", "185750"),
+    TargetCompany("SK바이오팜", aliases=("에스케이바이오팜",)),
+    TargetCompany("SK바이오사이언스", aliases=("에스케이바이오사이언스",)),
+    TargetCompany("알테오젠"),
+    TargetCompany("리가켐바이오", aliases=("레고켐바이오",)),
+    TargetCompany("휴젤"),
+    TargetCompany("GC녹십자", aliases=("녹십자",)),
+    TargetCompany("대웅제약"),
+    TargetCompany("보령", aliases=("보령제약",)),
+    TargetCompany("HK이노엔"),
+    TargetCompany("동아에스티"),
+    TargetCompany("한올바이오파마"),
+    TargetCompany("JW중외제약"),
+    TargetCompany("동국제약"),
+    TargetCompany("삼천당제약"),
+    TargetCompany("메디톡스"),
+    TargetCompany("에스티팜"),
+    TargetCompany("차바이오텍"),
+    TargetCompany("대원제약"),
+    TargetCompany("부광약품"),
+    TargetCompany("한국유나이티드제약", aliases=("유나이티드제약",)),
+    TargetCompany("한독"),
+    TargetCompany("안국약품"),
+    TargetCompany("삼진제약"),
+    TargetCompany("제일약품"),
+    TargetCompany("일동제약"),
+    TargetCompany("신풍제약"),
+    TargetCompany("오스코텍"),
 ]
 
 ACCOUNTING_TOPICS: list[str] = [
@@ -55,20 +91,24 @@ TOPIC_KEYWORDS: dict[str, list[str]] = {
     "공정가치 평가": ["공정가치", "평가기법", "서열체계", "수준1", "수준2", "수준3"],
 }
 
-NOTE_PARENT_KEYWORDS = ["일반사항", "회사의 개요", "중요한 회계정책", "주석"]
+NOTE_PARENT_KEYWORDS = ["일반사항", "회사 개요", "중요한 회계정책", "주석", "사업의 내용", "연구개발활동"]
 NOTEISH_TITLE_RE = re.compile(
-    r"(주석|회계정책|유의사항|중요한\s*회계|재무제표|부속명세|변동|추가정보|보충정보)"
+    r"(주석|회계정책|유의사항|중요한\s*회계|재무제표|부문정보|추가정보|보충정보|사업의\s*내용|연구개발)"
 )
-CORP_CODE_MAP: dict[str, str] = {}
+ANNUAL_REPORT_YEAR_RE = re.compile(r"사업보고서\s*\((\d{4})\.\d{2}\)")
 
-REPORT_LOOKBACK = 2
-MAX_SECTION_NODES = 8
-SECTION_CHUNK_SIZE = 2200
-SECTION_CHUNK_OVERLAP = 250
-TOPIC_WINDOW_LEFT = 1600
-TOPIC_WINDOW_RIGHT = 4200
-MERGED_BUNDLE_CHUNK_SIZE = 4000
-MERGED_BUNDLE_OVERLAP = 350
+CORP_CODE_MAP: dict[str, str] = {}
+CORP_NAME_MAP: dict[str, tuple[str, str, str]] = {}
+
+TARGET_REPORT_YEARS = ("2025", "2024")
+REPORT_LOOKBACK = len(TARGET_REPORT_YEARS)
+MAX_SECTION_NODES = 12
+SECTION_CHUNK_SIZE = 1000
+SECTION_CHUNK_OVERLAP = 150
+TOPIC_WINDOW_LEFT = 800
+TOPIC_WINDOW_RIGHT = 1200
+MERGED_BUNDLE_CHUNK_SIZE = 1200
+MERGED_BUNDLE_OVERLAP = 150
 
 
 @dataclass
@@ -91,12 +131,14 @@ class DocNode:
 def _build_session() -> requests.Session:
     session = requests.Session()
     retry = Retry(
-        total=4,
-        backoff_factor=0.8,
+        total=2,
+        backoff_factor=0.3,
         status_forcelist=[429, 500, 502, 503, 504],
         allowed_methods=["GET"],
     )
-    session.mount("https://", HTTPAdapter(max_retries=retry))
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
     session.headers.update(
         {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -106,50 +148,105 @@ def _build_session() -> requests.Session:
     return session
 
 
-SESSION = _build_session()
+SESSION: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    global SESSION
+    if SESSION is None:
+        SESSION = _build_session()
+    return SESSION
 
 
 def _normalize(text: str) -> str:
     return unicodedata.normalize("NFKC", text or "").strip()
 
 
-def _load_corp_code_map(api_key: str) -> dict[str, str]:
-    r = SESSION.get(f"{DART_API_BASE}/corpCode.xml", params={"crtfc_key": api_key}, timeout=45)
-    r.raise_for_status()
+def _normalize_name(text: str) -> str:
+    return re.sub(r"\s+", "", _normalize(text))
+
+
+def _load_corp_reference_map(api_key: str) -> tuple[dict[str, str], dict[str, tuple[str, str, str]]]:
+    print("[info] 기업코드 정보 로드 시작 (최대 30초)")
+    try:
+        r = _get_session().get(f"{DART_API_BASE}/corpCode.xml", params={"crtfc_key": api_key}, timeout=30)
+        r.raise_for_status()
+    except requests.exceptions.Timeout:
+        print("[error] 기업코드 API timeout - 네트워크 확인 후 재시도하세요")
+        raise
+    except Exception as e:
+        print(f"[error] 기업코드 API 호출 실패: {e}")
+        raise
     with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
         xml_bytes = zf.read("CORPCODE.xml")
+
     root = ET.fromstring(xml_bytes)
-    result: dict[str, str] = {}
+    by_stock: dict[str, str] = {}
+    by_name: dict[str, tuple[str, str, str]] = {}
+
     for item in root.findall("list"):
+        corp_name = _normalize(item.findtext("corp_name") or "")
         stock_code = (item.findtext("stock_code") or "").strip()
         corp_code = (item.findtext("corp_code") or "").strip()
-        if stock_code and corp_code:
-            result[stock_code] = corp_code
-    return result
+        if corp_code and stock_code:
+            by_stock[stock_code] = corp_code
+            by_name[_normalize_name(corp_name)] = (corp_code, stock_code, corp_name)
+
+    return by_stock, by_name
 
 
-def _get_corp_code(api_key: str, stock_code: str) -> str | None:
-    global CORP_CODE_MAP
-    if not CORP_CODE_MAP:
-        try:
-            CORP_CODE_MAP = _load_corp_code_map(api_key)
-        except Exception as e:
-            print(f"[fail] corpCode load failed: {e}")
-            return None
-    return CORP_CODE_MAP.get(stock_code)
+def _ensure_corp_reference_map(api_key: str) -> bool:
+    global CORP_CODE_MAP, CORP_NAME_MAP
+    if CORP_CODE_MAP and CORP_NAME_MAP:
+        return True
+    try:
+        CORP_CODE_MAP, CORP_NAME_MAP = _load_corp_reference_map(api_key)
+        return True
+    except Exception as e:
+        print(f"[fail] corpCode load failed: {e}")
+        return False
+
+
+def _find_company_reference(
+    api_key: str,
+    company_name: str,
+    stock_code: str | None = None,
+    aliases: tuple[str, ...] = (),
+) -> tuple[str, str, str] | None:
+    if not _ensure_corp_reference_map(api_key):
+        return None
+
+    if stock_code:
+        corp_code = CORP_CODE_MAP.get(stock_code)
+        if corp_code:
+            return corp_code, stock_code, company_name
+
+    candidates = [company_name, *aliases]
+    for candidate in candidates:
+        ref = CORP_NAME_MAP.get(_normalize_name(candidate))
+        if ref:
+            return ref
+
+    normalized_candidates = {_normalize_name(name) for name in candidates}
+    for corp_name_key, ref in CORP_NAME_MAP.items():
+        if any(candidate in corp_name_key or corp_name_key in candidate for candidate in normalized_candidates):
+            return ref
+
+    return None
 
 
 def _get_recent_reports(api_key: str, corp_code: str, limit: int = REPORT_LOOKBACK) -> list[dict[str, str]]:
+    target_receipt_years = {str(int(year) + 1) for year in TARGET_REPORT_YEARS}
     params = {
         "crtfc_key": api_key,
         "corp_code": corp_code,
         "pblntf_ty": "A",
-        "bgn_de": "20220101",
-        "end_de": "20261231",
-        "page_count": "20",
+        "bgn_de": f"{min(target_receipt_years)}0101",
+        "end_de": f"{max(target_receipt_years)}1231",
+        "page_count": "50",
     }
     try:
-        r = SESSION.get(f"{DART_API_BASE}/list.json", params=params, timeout=20)
+        r = _get_session().get(f"{DART_API_BASE}/list.json", params=params, timeout=15)
         r.raise_for_status()
         data = r.json()
         if data.get("status") != "000":
@@ -157,31 +254,43 @@ def _get_recent_reports(api_key: str, corp_code: str, limit: int = REPORT_LOOKBA
             return []
 
         rows = data.get("list", []) or []
-        annual = [
-            x for x in rows
-            if "사업보고서" in (x.get("report_nm") or "")
-            and "반기" not in (x.get("report_nm") or "")
-            and "분기" not in (x.get("report_nm") or "")
-        ]
-        return [
-            {
-                "rcp_no": x.get("rcept_no", ""),
-                "report_nm": x.get("report_nm", ""),
-                "rcept_dt": x.get("rcept_dt", ""),
-            }
-            for x in annual[:limit]
-            if x.get("rcept_no")
-        ]
+        annual: list[dict[str, str]] = []
+        for row in rows:
+            report_nm = row.get("report_nm") or ""
+            if "사업보고서" not in report_nm:
+                continue
+            if "반기" in report_nm or "분기" in report_nm:
+                continue
+            match = ANNUAL_REPORT_YEAR_RE.search(report_nm)
+            if not match:
+                continue
+            report_year = match.group(1)
+            if report_year not in TARGET_REPORT_YEARS:
+                continue
+            if not row.get("rcept_no"):
+                continue
+            annual.append(
+                {
+                    "rcp_no": row.get("rcept_no", ""),
+                    "report_nm": report_nm,
+                    "rcept_dt": row.get("rcept_dt", ""),
+                    "report_year": report_year,
+                }
+            )
+
+        annual.sort(key=lambda item: TARGET_REPORT_YEARS.index(item["report_year"]))
+        return annual[:limit]
     except Exception as e:
         print(f"[fail] report list fetch failed: {e}")
         return []
 
 
 def _fetch_left_panel(rcp_no: str) -> str:
-    r = SESSION.get(
+    time.sleep(1)  # Rate limiting 대비
+    r = _get_session().get(
         f"{DART_VIEWER_BASE}/dsaf001/main.do",
         params={"rcpNo": rcp_no, "leftFrameDiv": "X"},
-        timeout=40,
+        timeout=20,
     )
     r.raise_for_status()
     return r.text
@@ -196,16 +305,16 @@ def _decode_js_value(value: str) -> str:
 def _parse_doc_nodes(left_html: str) -> list[DocNode]:
     field_pattern = re.compile(r"node(?P<idx>\d+)\['(?P<key>[^']+)'\]\s*=\s*\"(?P<value>.*?)\";", re.DOTALL)
     buckets: dict[str, dict[str, str]] = {}
-    for m in field_pattern.finditer(left_html):
-        idx = m.group("idx")
-        key = m.group("key")
-        val = _decode_js_value(m.group("value"))
+    for match in field_pattern.finditer(left_html):
+        idx = match.group("idx")
+        key = match.group("key")
+        val = _decode_js_value(match.group("value"))
         buckets.setdefault(idx, {})[key] = val
 
     nodes: list[DocNode] = []
     for bucket in buckets.values():
         required = ["dcmNo", "eleId", "offset", "length", "dtd", "text"]
-        if not all(k in bucket for k in required):
+        if not all(key in bucket for key in required):
             continue
         nodes.append(
             DocNode(
@@ -224,62 +333,62 @@ def _find_notes_parent_node(nodes: list[DocNode]) -> DocNode | None:
     if not nodes:
         return None
 
-    max_len = max(n.length_int for n in nodes) or 1
-    keyword_re = re.compile("|".join(re.escape(k) for k in NOTE_PARENT_KEYWORDS))
+    max_len = max(node.length_int for node in nodes) or 1
+    keyword_re = re.compile("|".join(re.escape(keyword) for keyword in NOTE_PARENT_KEYWORDS))
     notes_anchor_re = re.compile(r"(재무제표\s*)?주석")
 
     anchor_idx: int | None = None
-    for i, n in enumerate(nodes):
-        if notes_anchor_re.search(_normalize(n.title)):
-            anchor_idx = i
+    for index, node in enumerate(nodes):
+        if notes_anchor_re.search(_normalize(node.title)):
+            anchor_idx = index
             break
 
     scored: list[tuple[float, DocNode]] = []
-    for i, n in enumerate(nodes):
-        title = _normalize(n.title)
-        ratio = n.length_int / max_len
+    for index, node in enumerate(nodes):
+        title = _normalize(node.title)
+        ratio = node.length_int / max_len
         score = ratio
         if keyword_re.search(title):
             score += 0.5
         if notes_anchor_re.search(title):
             score += 0.35
-        if anchor_idx is not None and i >= anchor_idx:
+        if anchor_idx is not None and index >= anchor_idx:
             score += 0.15
         if ratio >= 0.08 or notes_anchor_re.search(title) or keyword_re.search(title):
-            scored.append((score, n))
+            scored.append((score, node))
 
     if scored:
-        scored.sort(key=lambda x: x[0], reverse=True)
+        scored.sort(key=lambda item: item[0], reverse=True)
         return scored[0][1]
-    return max(nodes, key=lambda x: x.length_int)
+    return max(nodes, key=lambda item: item.length_int)
 
 
 def _select_note_nodes(nodes: list[DocNode]) -> list[DocNode]:
     if not nodes:
         return []
 
-    max_len = max(n.length_int for n in nodes) or 1
+    max_len = max(node.length_int for node in nodes) or 1
     anchor_idx: int | None = None
-    for i, n in enumerate(nodes):
-        if NOTEISH_TITLE_RE.search(_normalize(n.title)):
-            anchor_idx = i
+    for index, node in enumerate(nodes):
+        if NOTEISH_TITLE_RE.search(_normalize(node.title)):
+            anchor_idx = index
             break
 
     candidates: list[tuple[float, DocNode]] = []
-    for i, n in enumerate(nodes):
-        title = _normalize(n.title)
-        ratio = n.length_int / max_len
+    for index, node in enumerate(nodes):
+        title = _normalize(node.title)
+        ratio = node.length_int / max_len
         score = ratio
-        if any(re.search(re.escape(k), title) for k in NOTE_PARENT_KEYWORDS):
+        if any(re.search(re.escape(keyword), title) for keyword in NOTE_PARENT_KEYWORDS):
             score += 0.4
         if NOTEISH_TITLE_RE.search(title):
             score += 0.45
-        if anchor_idx is not None and i >= anchor_idx:
+        if anchor_idx is not None and index >= anchor_idx:
             score += 0.12
         if ratio >= 0.06 or NOTEISH_TITLE_RE.search(title):
-            candidates.append((score, n))
+            candidates.append((score, node))
 
-    candidates.sort(key=lambda x: x[0], reverse=True)
+    candidates.sort(key=lambda item: item[0], reverse=True)
     selected: list[DocNode] = []
     seen: set[str] = set()
     for _, node in candidates:
@@ -293,7 +402,35 @@ def _select_note_nodes(nodes: list[DocNode]) -> list[DocNode]:
     return selected
 
 
+def _html_to_markdown(soup: BeautifulSoup) -> str:
+    # Convert tables to markdown
+    for table in soup.find_all("table"):
+        markdown_table = []
+        rows = table.find_all("tr")
+        is_first_row = True
+        for row in rows:
+            cols = row.find_all(["th", "td"])
+            if not cols:
+                continue
+            # Extract text, replace newlines and pipes to avoid breaking markdown table
+            row_text = [col.get_text(separator=" ", strip=True).replace("\n", " ").replace("|", ",") for col in cols]
+            markdown_table.append("| " + " | ".join(row_text) + " |")
+            if is_first_row:
+                markdown_table.append("|" + "|".join(["---"] * len(row_text)) + "|")
+                is_first_row = False
+        
+        if markdown_table:
+            # Insert markdown string before the table
+            table.insert_before(soup.new_string("\n\n" + "\n".join(markdown_table) + "\n\n"))
+        table.decompose()
+        
+    text = soup.get_text(separator="\n", strip=True)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text
+
+
 def _fetch_section_text(rcp_no: str, node: DocNode) -> str:
+    time.sleep(1)  # Rate limiting 대비
     params = {
         "rcpNo": rcp_no,
         "dcmNo": node.dcm_no,
@@ -302,38 +439,32 @@ def _fetch_section_text(rcp_no: str, node: DocNode) -> str:
         "length": node.length,
         "dtd": node.dtd,
     }
-    r = SESSION.get(f"{DART_VIEWER_BASE}/report/viewer.do", params=params, timeout=70)
+    r = _get_session().get(f"{DART_VIEWER_BASE}/report/viewer.do", params=params, timeout=30)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
     for tag in soup(["script", "style"]):
         tag.decompose()
-    return soup.get_text(separator="\n", strip=True)
+    return _html_to_markdown(soup)
 
 
 def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
     text = _normalize(text)
     if not text:
         return []
-    if len(text) <= chunk_size:
-        return [text]
-
-    chunks: list[str] = []
-    start = 0
-    while start < len(text):
-        end = min(len(text), start + chunk_size)
-        piece = text[start:end].strip()
-        if piece:
-            chunks.append(piece)
-        if end >= len(text):
-            break
-        start = max(0, end - overlap)
-    return chunks
+    
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=overlap,
+        separators=["\n\n", "\n", " ", ""],
+    )
+    return splitter.split_text(text)
 
 
 def _merge_spans(spans: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
-    sorted_spans = sorted(spans, key=lambda x: x[0])
+    sorted_spans = sorted(spans, key=lambda item: item[0])
     if not sorted_spans:
         return []
+
     merged = [sorted_spans[0]]
     for start, end in sorted_spans[1:]:
         prev_start, prev_end = merged[-1]
@@ -347,13 +478,14 @@ def _merge_spans(spans: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
 def _extract_topic_chunks(full_text: str, topic: str) -> list[str]:
     keywords = TOPIC_KEYWORDS.get(topic, [topic])
     spans: list[tuple[int, int]] = []
-    for kw in keywords:
-        for match in re.finditer(re.escape(kw), full_text):
+    for keyword in keywords:
+        for match in re.finditer(re.escape(keyword), full_text):
             start = max(0, match.start() - TOPIC_WINDOW_LEFT)
             end = min(len(full_text), match.end() + TOPIC_WINDOW_RIGHT)
             spans.append((start, end))
     if not spans:
         return []
+
     chunks: list[str] = []
     for start, end in _merge_spans(spans):
         text = full_text[start:end].strip()
@@ -374,12 +506,13 @@ def _build_doc_id(meta: dict[str, str], idx: int) -> str:
 def _save_to_chroma(embeddings: OpenAIEmbeddings, docs: list[Document]) -> None:
     if not docs:
         return
+
     store = Chroma(
         collection_name=COLLECTION,
         embedding_function=embeddings,
         persist_directory=CHROMA_DIR,
     )
-    ids = [_build_doc_id(doc.metadata, i) for i, doc in enumerate(docs)]
+    ids = [_build_doc_id(doc.metadata, index) for index, doc in enumerate(docs)]
     try:
         store.delete(ids=ids)
     except Exception:
@@ -398,7 +531,7 @@ def _build_documents_for_report(
     rcp_no = report["rcp_no"]
     report_nm = report.get("report_nm", "")
     report_dt = report.get("rcept_dt", "")
-    year = report_dt[:4] if report_dt else "2024"
+    year = report.get("report_year") or (report_dt[:4] if report_dt else "2025")
     docs: list[Document] = []
 
     merged_notes = "\n\n".join(text for _, text in sections)
@@ -503,41 +636,51 @@ def _collect_sections_for_report(rcp_no: str) -> tuple[list[tuple[DocNode, str]]
     return sections, parent
 
 
-def ingest_company(api_key: str, embeddings: OpenAIEmbeddings, stock_code: str, company_name: str) -> bool:
-    corp_code = _get_corp_code(api_key, stock_code)
-    if not corp_code:
-        print(f"[skip] {company_name}: corp_code lookup failed")
+def ingest_company(api_key: str, embeddings: OpenAIEmbeddings, target: TargetCompany) -> bool:
+    ref = _find_company_reference(api_key, target.company_name, target.stock_code, target.aliases)
+    if not ref:
+        print(f"[skip] {target.company_name}: corp_code lookup failed")
         return False
 
+    corp_code, stock_code, resolved_name = ref
     reports = _get_recent_reports(api_key, corp_code)
     if not reports:
-        print(f"[skip] {company_name}: no recent annual report found")
+        print(f"[skip] {target.company_name}: no target annual report found")
         return False
 
     docs: list[Document] = []
     total_sections = 0
     total_topic_windows = 0
 
-    for report in reports:
+    for report_idx, report in enumerate(reports):
+        if report_idx > 0:
+            time.sleep(2)  # 보고서 간 대기 대비
         sections, parent = _collect_sections_for_report(report["rcp_no"])
         if not sections:
-            print(f"[skip] {company_name}: no sections for rcpNo={report['rcp_no']}")
+            print(f"[skip] {target.company_name}: no sections for rcpNo={report['rcp_no']}")
             continue
-        docs.extend(_build_documents_for_report(company_name, stock_code, corp_code, report, sections, parent))
+        docs.extend(_build_documents_for_report(target.company_name, stock_code, corp_code, report, sections, parent))
         total_sections += len(sections)
-        # Count topic windows in the generated docs for reporting only
-        total_topic_windows += sum(1 for d in docs if d.metadata.get("section_type") == "topic_window" and d.metadata.get("rcpNo") == report["rcp_no"])
+        total_topic_windows += sum(
+            1
+            for doc in docs
+            if doc.metadata.get("section_type") == "topic_window" and doc.metadata.get("rcpNo") == report["rcp_no"]
+        )
 
     if not docs:
-        print(f"[skip] {company_name}: no documents extracted")
+        print(f"[skip] {target.company_name}: no documents extracted")
         return False
 
     _save_to_chroma(embeddings, docs)
-    print(f"[ok] {company_name}: saved {len(docs)} docs (reports={len(reports)}, sections={total_sections}, topic_windows={total_topic_windows})")
+    print(
+        f"[ok] {target.company_name}: saved {len(docs)} docs "
+        f"(resolved={resolved_name}, reports={len(reports)}, sections={total_sections}, topic_windows={total_topic_windows})"
+    )
     return True
 
 
 def main() -> None:
+    print("[시작] DART 데이터 수집 시작")
     dart_key = os.getenv("DART_API_KEY", "")
     openai_key = os.getenv("OPENAI_API_KEY", "")
 
@@ -548,17 +691,22 @@ def main() -> None:
         print("[error] OPENAI_API_KEY is missing.")
         sys.exit(1)
 
+    print("[info] 임베딩 모델 초기화 중...")
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    print("[info] 임베딩 모델 준비 완료")
+    
     success = 0
-    for stock_code, company_name in TARGET_COMPANIES:
+    for idx, target in enumerate(TARGET_COMPANIES, 1):
+        print(f"\n[진행] {idx}/{len(TARGET_COMPANIES)}: {target.company_name} 처리 중...", flush=True)
         try:
-            if ingest_company(dart_key, embeddings, stock_code, company_name):
+            if ingest_company(dart_key, embeddings, target):
                 success += 1
-            time.sleep(0.4)
+            time.sleep(3)  # 회사 간 대기 대비 (rate limiting 방지)
         except Exception as e:
-            print(f"[error] {company_name}: {e}")
+            print(f"[error] {target.company_name}: {e}")
+            time.sleep(5)  # 에러 발생 시 더 대기
 
-    print(f"ingest complete: {success}/{len(TARGET_COMPANIES)} companies")
+    print(f"\n[완료] ingest complete: {success}/{len(TARGET_COMPANIES)} companies")
 
 
 if __name__ == "__main__":

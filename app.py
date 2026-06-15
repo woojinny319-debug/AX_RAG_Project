@@ -33,18 +33,39 @@ if not openai_key or openai_key == "your_openai_api_key_here":
     st.stop()
 
 
-@st.cache_resource(show_spinner="리트리버 로딩 중...")
-def load_retrievers() -> tuple[BaseRetriever, BaseRetriever, BaseRetriever | None]:
-    emb = OpenAIEmbeddings(model="text-embedding-3-small")
-    return get_kifrs_retriever(emb), get_kam_retriever(emb), get_dart_retriever(emb)
-
-
 @st.cache_resource(show_spinner=False)
+def load_embeddings() -> OpenAIEmbeddings:
+    """임베딩 모델은 캐시 (가장 무거운 리소스)"""
+    return OpenAIEmbeddings(model="text-embedding-3-small")
+
+
+@st.cache_resource(show_spinner="KIFRS 로딩 중...")
+def load_kifrs(emb: OpenAIEmbeddings) -> BaseRetriever:
+    """KIFRS 리트리버 캐시"""
+    return get_kifrs_retriever(emb)
+
+
+@st.cache_resource(show_spinner="KAM 로딩 중...")
+def load_kam(emb: OpenAIEmbeddings) -> BaseRetriever:
+    """KAM 리트리버 캐시"""
+    return get_kam_retriever(emb)
+
+
+@st.cache_resource(show_spinner="LLM 로딩 중...")
 def load_llm() -> ChatOpenAI:
-    return ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=700)
+    return ChatOpenAI(model="gpt-4o", temperature=0)
 
 
-kifrs_retriever, kam_retriever, dart_retriever = load_retrievers()
+def load_dart(emb: OpenAIEmbeddings) -> BaseRetriever | None:
+    """DART 리트리버는 캐시하지 않음 (자주 변경 가능, 복구 필요)"""
+    return get_dart_retriever(emb)
+
+
+# 리트리버 로드
+embeddings = load_embeddings()
+kifrs_retriever = load_kifrs(embeddings)
+kam_retriever = load_kam(embeddings)
+dart_retriever = load_dart(embeddings)  # 매번 새로 로드
 llm = load_llm()
 
 with st.sidebar:
@@ -53,9 +74,14 @@ with st.sidebar:
     st.markdown("- 검색엔진: `rag_engine.py`")
     st.markdown("- 수집기: `dart_ingest.py`")
     st.markdown("- 프롬프트: `prompts.py`")
+    
     if dart_retriever is None:
-        st.warning("DART 데이터가 비어 있습니다. `python dart_ingest.py` 실행이 필요합니다.")
-    if st.button("리트리버 새로고침", use_container_width=True):
+        st.warning("⚠️ DART 데이터가 비어 있습니다.")
+        st.caption("실행 필요: `python dart_ingest.py`")
+    else:
+        st.success("✅ DART 데이터 로드됨")
+    
+    if st.button("🔄 리트리버 새로고침", use_container_width=True):
         st.cache_resource.clear()
         st.rerun()
 
@@ -94,10 +120,10 @@ def _trim_docs(docs: list[Document], max_docs: int = 3, max_chars: int = 1200) -
 def _build_source_context(
     kifrs_docs: list[Document], dart_docs: list[Document], kam_docs: list[Document]
 ) -> tuple[str, list[dict[str, str]]]:
-    # 429(TPM) 방지를 위해 LLM 입력 컨텍스트를 제한
-    kifrs_docs = _trim_docs(kifrs_docs, max_docs=2, max_chars=900)
-    dart_docs = _trim_docs(dart_docs, max_docs=3, max_chars=1200)
-    kam_docs = _trim_docs(kam_docs, max_docs=1, max_chars=900)
+    # gpt-4o의 넉넉한 컨텍스트 윈도우를 활용하여 문서 길이 및 개수 확대
+    kifrs_docs = _trim_docs(kifrs_docs, max_docs=4, max_chars=2000)
+    dart_docs = _trim_docs(dart_docs, max_docs=15, max_chars=3500)
+    kam_docs = _trim_docs(kam_docs, max_docs=3, max_chars=1500)
 
     p1, c1 = format_cited_docs(kifrs_docs, 1)
     p2, c2 = format_cited_docs(dart_docs, len(c1) + 1)

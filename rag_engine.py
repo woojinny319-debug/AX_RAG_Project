@@ -119,11 +119,19 @@ def save_to_chroma(
 
 
 def _get_collection_count(collection_name: str) -> int:
+    """컬렉션 문서 개수 반환. HNSW 에러 발생 시 exception 그대로 throw."""
+    client = chromadb.PersistentClient(path=CHROMA_DIR)
+    return client.get_collection(collection_name).count()
+
+
+def _collection_exists(collection_name: str) -> bool:
+    """컬렉션 존재 여부만 확인 (문서 개수 세지 않음)."""
     client = chromadb.PersistentClient(path=CHROMA_DIR)
     try:
-        return client.get_collection(collection_name).count()
+        client.get_collection(collection_name)
+        return True
     except Exception:
-        return 0
+        return False
 
 
 def _reset_collection(collection_name: str) -> None:
@@ -154,16 +162,102 @@ def _load_all_docs(collection_name: str) -> list[Document]:
     return [Document(page_content=t, metadata=m or {}) for t, m in zip(docs, metas)]
 
 
+from typing import Any
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
+
+TARGET_COMPANIES_LIST = [
+    "삼성바이오로직스", "셀트리온", "한미약품", "유한양행", "종근당", "SK바이오팜", 
+    "SK바이오사이언스", "알테오젠", "리가켐바이오", "휴젤", "GC녹십자", "대웅제약", 
+    "보령", "HK이노엔", "동아에스티", "한올바이오파마", "JW중외제약", "동국제약", 
+    "삼천당제약", "메디톡스", "에스티팜", "차바이오텍", "대원제약", "부광약품", 
+    "한국유나이티드제약", "한독", "안국약품", "삼진제약", "제일약품", "일동제약", 
+    "신풍제약", "오스코텍", "레고켐바이오", "에스케이바이오팜", "에스케이바이오사이언스", 
+    "녹십자", "보령제약", "유나이티드제약"
+]
+
+class DynamicDartRetriever(BaseRetriever):
+    store: Any
+    global_bm25_docs: list
+    global_bm25_retriever: Any
+    
+    def _get_relevant_documents(self, query: str, *, run_manager: CallbackManagerForRetrieverRun) -> list[Document]:
+        found_companies = [comp for comp in TARGET_COMPANIES_LIST if comp in query]
+        
+        if found_companies:
+            alias_map = {
+                "레고켐바이오": "리가켐바이오",
+                "에스케이바이오팜": "SK바이오팜",
+                "에스케이바이오사이언스": "SK바이오사이언스",
+                "녹십자": "GC녹십자",
+                "보령제약": "보령",
+                "유나이티드제약": "한국유나이티드제약"
+            }
+            target_company = alias_map.get(found_companies[0], found_companies[0])
+            print(f"[DynamicDartRetriever] 질의에서 기업명 '{target_company}' 감지. 단일 기업 필터링 수행.")
+            
+            search_kwargs = {"k": 30, "filter": {"company": target_company}}
+            semantic_docs = self.store.similarity_search(query, **search_kwargs)
+            
+            filtered_bm25_docs = [d for d in self.global_bm25_docs if d.metadata.get("company") == target_company]
+            if filtered_bm25_docs:
+                from langchain_community.retrievers import BM25Retriever
+                enriched = []
+                for d in filtered_bm25_docs:
+                    company = d.metadata.get("company", "")
+                    year = d.metadata.get("year", "")
+                    section = d.metadata.get("section", "")
+                    prefix = f"[{company} {year}년 {section}] " if company else ""
+                    enriched.append(Document(page_content=prefix + (d.page_content or ""), metadata=d.metadata))
+                bm25 = BM25Retriever.from_documents(enriched, k=30)
+                bm25_docs = bm25.invoke(query)
+                combined = self._rrf([semantic_docs, bm25_docs])
+            else:
+                combined = semantic_docs
+        else:
+            print("[DynamicDartRetriever] 질의에서 기업명 미감지. 전역 검색 수행.")
+            search_kwargs = {"k": 30}
+            semantic_docs = self.store.similarity_search(query, **search_kwargs)
+            if self.global_bm25_retriever:
+                bm25_docs = self.global_bm25_retriever.invoke(query)
+                combined = self._rrf([semantic_docs, bm25_docs])
+            else:
+                combined = semantic_docs
+                
+        return combined[:20]
+
+    def _rrf(self, doc_lists: list[list[Document]], k: int = 60) -> list[Document]:
+        rrf_score = {}
+        for doc_list in doc_lists:
+            for rank, doc in enumerate(doc_list):
+                content = doc.page_content
+                score = 1.0 / (rank + k)
+                if content in rrf_score:
+                    rrf_score[content]["score"] += score
+                else:
+                    rrf_score[content] = {"score": score, "doc": doc}
+        sorted_docs = sorted(rrf_score.values(), key=lambda x: x["score"], reverse=True)
+        return [item["doc"] for item in sorted_docs]
+
 def _make_base_hybrid_retriever(collection_name: str, embeddings: OpenAIEmbeddings, bm25_docs: list[Document]) -> BaseRetriever:
     if not bm25_docs:
         raise ValueError(f"{collection_name} 컬렉션에 검색 가능한 문서가 없습니다.")
     store = Chroma(collection_name=collection_name, embedding_function=embeddings, persist_directory=CHROMA_DIR)
-    bm25 = BM25Retriever.from_documents(bm25_docs, k=50)
+    
+    # BM25의 키워드 매칭(예: 기업명)을 강화하기 위해 메타데이터를 본문에 추가
+    enriched_bm25_docs = []
+    for d in bm25_docs:
+        company = d.metadata.get("company", "")
+        year = d.metadata.get("year", "")
+        section = d.metadata.get("section", "")
+        prefix = f"[{company} {year}년 {section}] " if company else ""
+        enriched_bm25_docs.append(Document(page_content=prefix + (d.page_content or ""), metadata=d.metadata))
+
+    bm25 = BM25Retriever.from_documents(enriched_bm25_docs, k=50)
     semantic = store.as_retriever(search_kwargs={"k": 50})
-    return EnsembleRetriever(retrievers=[bm25, semantic], weights=[0.35, 0.65])
+    return EnsembleRetriever(retrievers=[bm25, semantic], weights=[0.5, 0.5])
 
 
-def _build_2stage(base: BaseRetriever, rerank_top_n: int = 10) -> BaseRetriever:
+def _build_2stage(base: BaseRetriever, rerank_top_n: int = 15) -> BaseRetriever:
     if ContextualCompressionRetriever is None or FlashrankRerank is None:
         print("[경고] FlashRank 미설치: 1단계 하이브리드 검색만 사용")
         return base
@@ -198,20 +292,26 @@ def _make_retriever(collection_name: str, embeddings: OpenAIEmbeddings, docs_to_
 
 def get_kifrs_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever:
     collection = "kifrs"
-    count = _get_collection_count(collection)
-    if count == 0:
+    
+    # 컬렉션 없으면 PDF에서 초기화
+    if not _collection_exists(collection):
+        print("[info] KIFRS 컬렉션 초기화 중...")
         raw: list[Document] = []
         for filename, source_id in K_IFRS_PDFS:
             p = PROJECT_ROOT / filename
             if p.exists():
                 raw.extend(_load_pdf(p, source_id))
         _make_retriever(collection, embeddings, docs_to_ingest=_chunk(raw))
+        print(f"[✓] KIFRS 초기화 완료: {len(raw)}개 문서")
+    
+    # 리트리버 로드 시도
     try:
         return _make_retriever(collection, embeddings)
     except Exception as e:
         msg = str(e).lower()
-        if "error loading hnsw index" in msg or "constructing hnsw segment reader" in msg:
-            print("[복구] kifrs 리트리버 생성 실패 -> 컬렉션 재생성")
+        if "error loading hnsw index" in msg or "constructing hnsw segment reader" in msg or "backfill" in msg:
+            print("[!] KIFRS HNSW 인덱스 손상 감지")
+            print("[복구] KIFRS 컬렉션 재생성 중...")
             _reset_collection(collection)
             raw: list[Document] = []
             for filename, source_id in K_IFRS_PDFS:
@@ -219,26 +319,33 @@ def get_kifrs_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever:
                 if p.exists():
                     raw.extend(_load_pdf(p, source_id))
             _make_retriever(collection, embeddings, docs_to_ingest=_chunk(raw))
+            print("[✓] KIFRS 복구 완료")
             return _make_retriever(collection, embeddings)
         raise
 
 
 def get_kam_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever:
     collection = "kam"
-    count = _get_collection_count(collection)
-    if count == 0:
+    
+    # 컬렉션 없으면 PDF에서 초기화
+    if not _collection_exists(collection):
+        print("[info] KAM 컬렉션 초기화 중...")
         raw: list[Document] = []
         for filename, source_id in KAM_PDFS:
             p = PROJECT_ROOT / filename
             if p.exists():
                 raw.extend(_load_pdf(p, source_id))
         _make_retriever(collection, embeddings, docs_to_ingest=_chunk(raw))
+        print(f"[✓] KAM 초기화 완료: {len(raw)}개 문서")
+    
+    # 리트리버 로드 시도
     try:
         return _make_retriever(collection, embeddings)
     except Exception as e:
         msg = str(e).lower()
-        if "error loading hnsw index" in msg or "constructing hnsw segment reader" in msg:
-            print("[복구] kam 리트리버 생성 실패 -> 컬렉션 재생성")
+        if "error loading hnsw index" in msg or "constructing hnsw segment reader" in msg or "backfill" in msg:
+            print("[!] KAM HNSW 인덱스 손상 감지")
+            print("[복구] KAM 컬렉션 재생성 중...")
             _reset_collection(collection)
             raw: list[Document] = []
             for filename, source_id in KAM_PDFS:
@@ -246,12 +353,70 @@ def get_kam_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever:
                 if p.exists():
                     raw.extend(_load_pdf(p, source_id))
             _make_retriever(collection, embeddings, docs_to_ingest=_chunk(raw))
+            print("[✓] KAM 복구 완료")
             return _make_retriever(collection, embeddings)
         raise
 
 
 def get_dart_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever | None:
     collection = "dart"
-    if _get_collection_count(collection) == 0:
+    
+    # Step 1: 컬렉션 존재 여부 확인
+    if not _collection_exists(collection):
+        print(f"[info] DART 컬렉션이 없습니다. 초기화 필요: python dart_ingest.py 실행")
         return None
-    return _make_retriever(collection, embeddings)
+    
+    # Step 2: 컬렉션 로드 시도 (HNSW 에러 감지 및 복구)
+    try:
+        bm25_docs = _load_all_docs(collection)
+        print(f"[✓] DART 리트리버 로드 성공: {len(bm25_docs)}개 문서")
+    except Exception as e:
+        msg = str(e).lower()
+        if "error loading hnsw index" in msg or "constructing hnsw segment reader" in msg or "backfill" in msg:
+            print(f"[!] DART HNSW 인덱스 손상 감지: {str(e)[:80]}")
+            print(f"[복구] DART 컬렉션 재생성 중...")
+            _reset_collection(collection)
+            print(f"[✓] DART 컬렉션 초기화 완료. 재실행 필요: python dart_ingest.py")
+            return None
+        else:
+            print(f"[ERROR] DART 로드 중 예기치 않은 에러: {e}")
+            raise
+
+    if not bm25_docs:
+        print("[info] DART 컬렉션이 비어있습니다.")
+        return None
+
+    # Step 3: 리트리버 생성
+    try:
+        store = Chroma(collection_name=collection, embedding_function=embeddings, persist_directory=CHROMA_DIR)
+        
+        from langchain_community.retrievers import BM25Retriever
+        enriched_bm25_docs = []
+        for d in bm25_docs:
+            company = d.metadata.get("company", "")
+            year = d.metadata.get("year", "")
+            section = d.metadata.get("section", "")
+            prefix = f"[{company} {year}년 {section}] " if company else ""
+            enriched_bm25_docs.append(Document(page_content=prefix + (d.page_content or ""), metadata=d.metadata))
+        
+        global_bm25 = BM25Retriever.from_documents(enriched_bm25_docs, k=30)
+        
+        base = DynamicDartRetriever(
+            store=store, 
+            global_bm25_docs=bm25_docs, 
+            global_bm25_retriever=global_bm25
+        )
+        print("[✓] DART 하이브리드 리트리버 생성 완료")
+        return _build_2stage(base, rerank_top_n=10)
+        
+    except Exception as e:
+        msg = str(e).lower()
+        if "error loading hnsw index" in msg or "constructing hnsw segment reader" in msg or "backfill" in msg:
+            print(f"[!] DART 리트리버 생성 중 HNSW 에러 발생")
+            print(f"[복구] DART 컬렉션 재생성 중...")
+            _reset_collection(collection)
+            print(f"[✓] DART 컬렉션 초기화 완료. 재실행 필요: python dart_ingest.py")
+            return None
+        else:
+            print(f"[ERROR] DART 리트리버 생성 중 예기치 않은 에러: {e}")
+            raise
