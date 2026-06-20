@@ -31,8 +31,13 @@ load_dotenv(BASE_DIR.parent / ".env")
 
 DART_API_BASE = "https://opendart.fss.or.kr/api"
 DART_VIEWER_BASE = "https://dart.fss.or.kr"
-CHROMA_DIR = str(BASE_DIR / "chroma_db")
-COLLECTION = "dart"
+# [근본 원인] 한글 경로에서 chromadb Rust HNSW 로더가 실패하므로 벡터 DB는 ASCII 절대경로에 둔다.
+CHROMA_DIR = os.path.join(os.path.expanduser("~"), "rag_chroma_data", "chroma_db_v2")
+if not CHROMA_DIR.isascii():
+    CHROMA_DIR = str(BASE_DIR / "chroma_db_v2")
+# 컬렉션 이름: 'dart'를 삭제→재생성 반복하며 누적된 잔여 상태가 HNSW 인덱스 영속화를
+# 깨뜨려(2026-06-19 디버깅), 오염되지 않은 'dart_docs' 이름으로 이전함.
+COLLECTION = "dart_docs"
 
 
 @dataclass(frozen=True)
@@ -95,6 +100,28 @@ NOTE_PARENT_KEYWORDS = ["일반사항", "회사 개요", "중요한 회계정책
 NOTEISH_TITLE_RE = re.compile(
     r"(주석|회계정책|유의사항|중요한\s*회계|재무제표|부문정보|추가정보|보충정보|사업의\s*내용|연구개발)"
 )
+
+# [옵션 A] 질문 의도(연구개발비 자산화·파이프라인·매출)와 정렬된 "필수 수집" 섹션 화이트리스트.
+# 길이 기반 휴리스틱이 핵심 섹션을 누락시키던 문제를 구조적으로 차단한다.
+# 각 키워드는 리프(말단) 섹션 제목에만 매칭되도록 구체적으로 선정했다(상위 폴더명과 겹치지 않음).
+SECTION_WHITELIST: tuple[str, ...] = (
+    "무형자산",          # R&D 자산화 명세(개발비/내용연수/상각) — 핵심
+    "연구개발",          # "주요계약 및 연구개발활동" (파이프라인·임상·R&D 총액)
+    "회계정책",          # 중요한 회계정책 (자산화 요건·수익인식 정책)
+    "주요 제품",         # 제품/서비스 구성
+    "매출 및 수주",      # 매출 비중·수주 상황
+    "매출액",            # 매출 주석(정량)
+    "매출실적",          # 상세 매출실적
+    "사업의 개요",       # 사업 개요
+    "재무상태표",        # 핵심 정량표
+    "포괄손익계산서",    # 경상연구개발비 등 손익 항목
+    "현금흐름표",        # 현금흐름(경상연구개발비 조정)
+)
+
+# 하위 노드를 통째로 포함하는 "상위 폴더(컨테이너)" 노드는 본문이 과대(수 MB)하므로 제외.
+# 예: "II. 사업의 내용"(295K), "III. 재무에 관한 사항"(7M), "3. 연결재무제표 주석"(2.8M)
+CONTAINER_TITLE_RE = re.compile(r"^\s*[IVXLCDM]+\.\s")  # 로마숫자 대제목(I. II. III. ...)
+MAX_CONTAINER_LENGTH = 1_500_000  # 이보다 큰 노드는 서브트리 묶음으로 간주하여 제외
 ANNUAL_REPORT_YEAR_RE = re.compile(r"사업보고서\s*\((\d{4})\.\d{2}\)")
 
 CORP_CODE_MAP: dict[str, str] = {}
@@ -102,7 +129,7 @@ CORP_NAME_MAP: dict[str, tuple[str, str, str]] = {}
 
 TARGET_REPORT_YEARS = ("2025", "2024")
 REPORT_LOOKBACK = len(TARGET_REPORT_YEARS)
-MAX_SECTION_NODES = 12
+MAX_SECTION_NODES = 30
 SECTION_CHUNK_SIZE = 1000
 SECTION_CHUNK_OVERLAP = 150
 TOPIC_WINDOW_LEFT = 800
@@ -275,11 +302,29 @@ def _get_recent_reports(api_key: str, corp_code: str, limit: int = REPORT_LOOKBA
                     "report_nm": report_nm,
                     "rcept_dt": row.get("rcept_dt", ""),
                     "report_year": report_year,
+                    "is_correction": "정정" in report_nm,
                 }
             )
 
-        annual.sort(key=lambda item: TARGET_REPORT_YEARS.index(item["report_year"]))
-        return annual[:limit]
+        # [버그 수정] 타깃 연도별로 1개씩 선택해 연도 커버리지를 보장한다.
+        # 기존엔 단순 [:limit]라서, 한 연도의 (원본+기재정정) 2건이 슬롯을 모두 차지해
+        # 다른 연도(예: 2024)가 누락됐다. 또한 기재정정본은 일부 섹션만 담는 경우가 많아
+        # 동일 연도에선 "원본(non-correction)"을 우선하고, 같은 종류면 최신 접수분을 택한다.
+        best_by_year: dict[str, dict[str, str]] = {}
+        for item in annual:
+            year = item["report_year"]
+            current = best_by_year.get(year)
+            if current is None:
+                best_by_year[year] = item
+                continue
+            # 원본 > 정정 우선
+            if current["is_correction"] and not item["is_correction"]:
+                best_by_year[year] = item
+            elif current["is_correction"] == item["is_correction"] and item["rcept_dt"] > current["rcept_dt"]:
+                best_by_year[year] = item
+
+        selected = [best_by_year[year] for year in TARGET_REPORT_YEARS if year in best_by_year]
+        return selected[:limit]
     except Exception as e:
         print(f"[fail] report list fetch failed: {e}")
         return []
@@ -303,16 +348,19 @@ def _decode_js_value(value: str) -> str:
 
 
 def _parse_doc_nodes(left_html: str) -> list[DocNode]:
-    field_pattern = re.compile(r"node(?P<idx>\d+)\['(?P<key>[^']+)'\]\s*=\s*\"(?P<value>.*?)\";", re.DOTALL)
-    buckets: dict[str, dict[str, str]] = {}
-    for match in field_pattern.finditer(left_html):
-        idx = match.group("idx")
-        key = match.group("key")
-        val = _decode_js_value(match.group("value"))
-        buckets.setdefault(idx, {})[key] = val
+    # DART 좌측 패널 JS는 `var node1 = {}; node1['text']=...; ...` 형태로 노드를 선언하는데,
+    # node1/node2/node3 변수명을 "트리 깊이"별로 재사용한다(같은 변수명을 형제 노드마다 덮어씀).
+    # 따라서 변수명(idx)으로 버킷팅하면 마지막 값만 남아 노드가 소실된다.
+    # 올바른 방법: `var nodeN = {}` 선언을 경계로 순차 분할하여 각 세그먼트를 1개 노드로 본다.
+    field_pattern = re.compile(r"node\d+\['(?P<key>[^']+)'\]\s*=\s*\"(?P<value>.*?)\";", re.DOTALL)
+    segments = re.split(r"var\s+node\d+\s*=\s*\{\}\s*;", left_html)
 
     nodes: list[DocNode] = []
-    for bucket in buckets.values():
+    for segment in segments:
+        bucket: dict[str, str] = {}
+        for match in field_pattern.finditer(segment):
+            bucket[match.group("key")] = _decode_js_value(match.group("value"))
+
         required = ["dcmNo", "eleId", "offset", "length", "dtd", "text"]
         if not all(key in bucket for key in required):
             continue
@@ -363,42 +411,39 @@ def _find_notes_parent_node(nodes: list[DocNode]) -> DocNode | None:
     return max(nodes, key=lambda item: item.length_int)
 
 
+def _is_container_node(node: DocNode) -> bool:
+    """하위 노드를 통째로 묶은 상위 폴더(컨테이너) 노드인지 판별. 컨테이너는 본문이 과대해 제외한다."""
+    title = _normalize(node.title)
+    if CONTAINER_TITLE_RE.search(title):
+        return True
+    if node.length_int > MAX_CONTAINER_LENGTH:
+        return True
+    return False
+
+
 def _select_note_nodes(nodes: list[DocNode]) -> list[DocNode]:
+    """[옵션 A+B] 화이트리스트 기반 섹션 선택.
+
+    기존 길이/빈도 휴리스틱은 분량 큰 곁다리 섹션(특수관계자·위험관리 등)을 선호해
+    정작 핵심인 연구개발비·무형자산·매출 섹션을 누락시켰다(2026-06-19 진단).
+    이제 질문 의도와 정렬된 SECTION_WHITELIST 키워드에 걸리는 리프 노드만 선택한다.
+    """
     if not nodes:
         return []
 
-    max_len = max(node.length_int for node in nodes) or 1
-    anchor_idx: int | None = None
-    for index, node in enumerate(nodes):
-        if NOTEISH_TITLE_RE.search(_normalize(node.title)):
-            anchor_idx = index
-            break
-
-    candidates: list[tuple[float, DocNode]] = []
-    for index, node in enumerate(nodes):
-        title = _normalize(node.title)
-        ratio = node.length_int / max_len
-        score = ratio
-        if any(re.search(re.escape(keyword), title) for keyword in NOTE_PARENT_KEYWORDS):
-            score += 0.4
-        if NOTEISH_TITLE_RE.search(title):
-            score += 0.45
-        if anchor_idx is not None and index >= anchor_idx:
-            score += 0.12
-        if ratio >= 0.06 or NOTEISH_TITLE_RE.search(title):
-            candidates.append((score, node))
-
-    candidates.sort(key=lambda item: item[0], reverse=True)
     selected: list[DocNode] = []
     seen: set[str] = set()
-    for _, node in candidates:
-        key = _normalize(node.title)
-        if key in seen:
+    for node in nodes:
+        title = _normalize(node.title)
+        if not title or title in seen:
             continue
-        seen.add(key)
-        selected.append(node)
-        if len(selected) >= MAX_SECTION_NODES:
-            break
+        if _is_container_node(node):
+            continue
+        if any(keyword in title for keyword in SECTION_WHITELIST):
+            seen.add(title)
+            selected.append(node)
+            if len(selected) >= MAX_SECTION_NODES:
+                break
     return selected
 
 
@@ -559,28 +604,9 @@ def _build_documents_for_report(
                 )
             )
 
-    for idx, chunk in enumerate(_chunk_text(merged_notes, MERGED_BUNDLE_CHUNK_SIZE, MERGED_BUNDLE_OVERLAP)):
-        docs.append(
-            Document(
-                page_content=chunk,
-                metadata={
-                    "source": f"DART_{company_name}_{year}",
-                    "company": company_name,
-                    "ticker": stock_code,
-                    "corp_code": corp_code,
-                    "rcpNo": rcp_no,
-                    "report_nm": report_nm,
-                    "report_dt": report_dt,
-                    "year": year,
-                    "section": "merged_notes",
-                    "chunk_index": str(idx),
-                    "section_type": "notes_bundle",
-                    "source_url": f"{DART_VIEWER_BASE}/dsaf001/main.do?rcpNo={rcp_no}",
-                    "node_title": parent.title if parent else "",
-                },
-            )
-        )
-
+    # [옵션 C] notes_bundle(merged_notes 통합본) 저장은 제거.
+    # 동일 내용을 note_section과 중복 저장해 검색 다양성을 떨어뜨리고 임베딩 비용을 2배로 늘렸다.
+    # 단, 토픽 윈도우 추출을 위해 merged_notes 텍스트 자체는 아래에서 계속 사용한다.
     for topic in ACCOUNTING_TOPICS:
         for idx, chunk in enumerate(_extract_topic_chunks(merged_notes, topic)):
             docs.append(

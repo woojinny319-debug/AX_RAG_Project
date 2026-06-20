@@ -94,16 +94,12 @@ for m in st.session_state["messages"]:
 
 
 def retrieve_parallel(query: str) -> tuple[list[Document], list[Document], list[Document]]:
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        f1: Future[list[Document]] = ex.submit(kifrs_retriever.invoke, query)
-        f2: Future[list[Document]] = ex.submit(kam_retriever.invoke, query)
-        if dart_retriever is not None:
-            f3: Future[list[Document]] = ex.submit(dart_retriever.invoke, query)
-            dart_docs = f3.result()
-        else:
-            dart_docs = []
-        kifrs_docs = f1.result()
-        kam_docs = f2.result()
+    # [중요] 순차 검색. chromadb 1.5.x는 단일 클라이언트의 동시(멀티스레드) 쿼리에서
+    # "Nothing found on disk"(HNSW 세그먼트 레이스)를 던진다. 검색은 빠르므로 순차로 충분.
+    # (2026-06-20 디버깅: 병렬 ThreadPoolExecutor → 순차로 변경)
+    kifrs_docs = kifrs_retriever.invoke(query)
+    kam_docs = kam_retriever.invoke(query)
+    dart_docs = dart_retriever.invoke(query) if dart_retriever is not None else []
     return kifrs_docs, dart_docs, kam_docs
 
 

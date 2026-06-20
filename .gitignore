@@ -3,8 +3,12 @@
 *.env
 RAG_Project_Open AI API_KEY.txt
 
-# ChromaDB 벡터 저장소
+# ChromaDB 벡터 저장소 (재생성 가능; 실제 DB는 ASCII 경로 ~/rag_chroma_data 에 있음)
 chroma_db/
+chroma_db_v2/
+
+# 임베딩/BM25 백업 (대용량, 재생성 가능): dart_data.pkl(174MB), dart_bm25.pkl(37MB)
+*.pkl
 
 # Python 캐시
 __pycache__/
@@ -17,12 +21,23 @@ dist/
 build/
 .eggs/
 
-# PDF 원본 파일 (용량 큰 이진 파일)
+# PDF 원본 파일 (용량 큰 이진 파일 / 저작권). 공유하려면 이 줄을 주석 처리
 *.pdf
 
-# Streamlit 로그
+# 로그
+*.log
 streamlit.log
 .streamlit/
+
+# 임시 텍스트 (단, requirements.txt 는 공유)
+*.txt
+!requirements.txt
+
+# 일회성 진단/테스트 스크립트 (run_benchmark.py / finalize_db.py / rebuild_dart_index.py 는 공유)
+check_*.py
+dump_*.py
+test_*.py
+adr_test_result.md
 
 # 이미지
 *.png
@@ -32,6 +47,13 @@ streamlit.log
 # 옵시디언 노트 앱 설정
 .obsidian/
 Samil_AX Node/
+
+# Claude Code 로컬 도구 설정 (개발자 개인 설정 — 공유하려면 이 줄들 제거)
+.claude/
+
+# 개인 학습 자료(Notes)는 제외하되, 벤치마크(Benchmarks)는 파트너와 공유하기 위해 포함
+/Notes/*
+!/Notes/Benchmarks/
 
 # 임시/작업 파일
 plan.md
