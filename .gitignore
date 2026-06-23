@@ -27,7 +27,9 @@ build/
 # 로그
 *.log
 streamlit.log
-.streamlit/
+.streamlit/*
+# 다크 테마는 파트너와 공유
+!.streamlit/config.toml
 
 # 임시 텍스트 (단, requirements.txt 는 공유)
 *.txt
@@ -37,7 +39,11 @@ streamlit.log
 check_*.py
 dump_*.py
 test_*.py
+# _e2e.py, _shot.py 등 스크린샷/디버깅용 임시 스크립트
+_*.py
 adr_test_result.md
+# 개인 논문 스터디용 문서 (GitHub 공유 제외)
+프로젝트 기술스택 개요 (논문 스터디용).md
 
 # 이미지
 *.png

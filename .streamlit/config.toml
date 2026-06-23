@@ -1,0 +1,8 @@
+# 차분한 다크 네이비 테마 (침착·전문)
+[theme]
+base = "dark"
+primaryColor = "#6FA0DA"            # 차분한 azure 포인트
+backgroundColor = "#0F1826"         # 딥 네이비 배경
+secondaryBackgroundColor = "#19233A" # 카드·말풍선·사이드바
+textColor = "#E4E9F1"               # 소프트 오프화이트
+font = "sans serif"
