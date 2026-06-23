@@ -6,7 +6,6 @@ import os
 import re
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -19,10 +18,259 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from prompts import SYSTEM_PROMPT, build_user_prompt, format_cited_docs
 from rag_engine import get_dart_retriever, get_kam_retriever, get_kifrs_retriever
 
+_PAGE_CSS = """
+<style>
+/* ── Streamlit 테마 primary 색상(빨강) 중립색으로 재정의 ── */
+:root {
+    --primary-color: #1a73e8 !important;
+}
+
+/* ── Streamlit chrome 숨김 ── */
+#MainMenu, footer, header, [data-testid="stToolbar"],
+[data-testid="stDecoration"] { visibility: hidden; height: 0; }
+
+/* ── 전체 배경 ── */
+html, body, .stApp, .main, [data-testid="stAppViewContainer"] {
+    background: #ffffff !important;
+    font-family: "Google Sans", "Noto Sans KR", sans-serif !important;
+}
+
+/* ── 콘텐츠 폭·여백 ── */
+.block-container {
+    max-width: 100% !important;
+    padding: 2.5rem 5vw 7rem 5vw !important;
+}
+
+/* ── 페이지 제목 ── */
+h1 {
+    font-size: 1.3rem !important;
+    font-weight: 500 !important;
+    color: #1f1f1f !important;
+    letter-spacing: -0.01em !important;
+    margin-bottom: 0.1rem !important;
+}
+.stCaption { color: #aaa !important; font-size: 12.5px !important; }
+
+/* ═══════════════════════════════════════
+   채팅 메시지 레이아웃
+═══════════════════════════════════════ */
+[data-testid="stChatMessage"] {
+    display: flex !important;
+    align-items: flex-start !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 4px 0 !important;
+    gap: 0 !important;
+}
+
+/* ── 아바타 숨김 ── */
+[data-testid="stChatMessageAvatarUser"],
+[data-testid="stChatMessageAvatarAssistant"] { display: none !important; }
+
+/* ═══════════════════════════════════════
+   사용자 말풍선 — Gemini 스타일
+   흰 배경 + 테두리 + 그림자, 오른쪽 정렬
+═══════════════════════════════════════ */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+    justify-content: flex-end !important;
+    margin-bottom: 6px !important;
+}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"])
+  [data-testid="stChatMessageContent"] {
+    background: #d6eeff !important;
+    border: none !important;
+    border-radius: 22px !important;
+    padding: 28px 28px !important;
+    width: fit-content !important;
+    max-width: 70% !important;
+    font-size: 15px !important;
+    font-weight: 400 !important;
+    line-height: 1.65 !important;
+    color: #1f1f1f !important;
+    text-align: left !important;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.07) !important;
+    display: flex !important;
+    align-items: center !important;
+}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"])
+  [data-testid="stChatMessageContent"] p {
+    margin: 0 !important;
+    text-align: left !important;
+}
+
+/* ═══════════════════════════════════════
+   어시스턴트 답변 — 배경 없는 순수 텍스트
+═══════════════════════════════════════ */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
+    justify-content: flex-start !important;
+    margin-bottom: 2px !important;
+}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])
+  [data-testid="stChatMessageContent"] {
+    background: transparent !important;
+    border: none !important;
+    max-width: 88% !important;
+    font-size: 15px !important;
+    line-height: 1.9 !important;
+    color: #1f1f1f !important;
+}
+/* 단락 간격 */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])
+  [data-testid="stChatMessageContent"] p {
+    margin-top: 0 !important;
+    margin-bottom: 0.8em !important;
+}
+/* 헤딩 스타일 */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])
+  [data-testid="stChatMessageContent"] h1 {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    color: #1f1f1f !important;
+    margin: 1.2em 0 0.4em 0 !important;
+}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])
+  [data-testid="stChatMessageContent"] h2 {
+    font-size: 18px !important;
+    font-weight: 600 !important;
+    color: #1f1f1f !important;
+    margin: 1.1em 0 0.35em 0 !important;
+}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])
+  [data-testid="stChatMessageContent"] h3 {
+    font-size: 22.5px !important;
+    font-weight: 600 !important;
+    color: #1f1f1f !important;
+    margin: 1em 0 0.3em 0 !important;
+    letter-spacing: -0.01em !important;
+}
+/* 불릿 리스트 */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])
+  [data-testid="stChatMessageContent"] ul,
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])
+  [data-testid="stChatMessageContent"] ol {
+    padding-left: 1.4em !important;
+    margin: 0.3em 0 0.8em 0 !important;
+}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])
+  [data-testid="stChatMessageContent"] li {
+    margin-bottom: 0.35em !important;
+    line-height: 1.75 !important;
+}
+
+/* ═══════════════════════════════════════
+   입력창 — Gemini 스타일 pill
+═══════════════════════════════════════ */
+[data-testid="stBottom"] {
+    background: #ffffff !important;
+    border-top: none !important;
+    padding: 0 5vw 16px 5vw !important;
+}
+[data-testid="stChatInput"] {
+    border-radius: 28px !important;
+    border: 1px solid #dde3ea !important;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08) !important;
+    background: #f0f4f9 !important;
+    overflow: hidden !important;
+}
+[data-testid="stChatInput"] textarea {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 16px 22px !important;
+    font-size: 15px !important;
+    background: transparent !important;
+    color: #1f1f1f !important;
+    resize: none !important;
+}
+[data-testid="stChatInput"] textarea::placeholder {
+    color: #9aa0a6 !important;
+}
+[data-testid="stChatInput"] textarea:focus,
+[data-testid="stChatInput"] textarea:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+    border: none !important;
+}
+[data-testid="stChatInput"]:focus-within,
+[data-testid="stChatInputContainer"]:focus-within {
+    outline: none !important;
+    border-color: #dde3ea !important;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08) !important;
+}
+/* 빨간 테두리 완전 제거 — 모든 하위 요소 */
+[data-testid="stChatInput"] *,
+[data-testid="stChatInput"] *:focus,
+[data-testid="stChatInput"] *:focus-visible,
+[data-testid="stChatInput"] *:focus-within,
+[data-testid="stChatInputContainer"],
+[data-testid="stChatInputContainer"]:focus,
+[data-testid="stChatInputContainer"]:focus-visible,
+[data-testid="stChatInputContainer"]:focus-within,
+[data-testid="stChatInputContainer"] *,
+[data-testid="stChatInputContainer"] *:focus,
+[data-testid="stChatInputContainer"] *:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+    border-color: transparent !important;
+}
+/* Streamlit 테마 accent 색상으로 인한 border 억제 */
+[data-testid="stChatInput"] div:focus-within,
+[data-testid="stChatInput"] div:focus {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* ═══════════════════════════════════════
+   출처 박스
+═══════════════════════════════════════ */
+.src-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 2px 0 12px 0;
+}
+.src-card { position: relative; display: inline-block; }
+.src-label {
+    border: 1px solid #dde3ea;
+    border-radius: 20px;
+    padding: 4px 12px;
+    background: #f0f4f9;
+    font-size: 11.5px;
+    color: #444746;
+    cursor: default;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+.src-label:hover { background: #e2e8f0; border-color: #b0bec5; }
+.src-tooltip {
+    display: none;
+    position: absolute;
+    z-index: 9999;
+    bottom: calc(100% + 8px);
+    left: 0;
+    background: #fff;
+    border: 1px solid #dde3ea;
+    border-radius: 12px;
+    padding: 14px 16px;
+    width: 420px;
+    max-height: 240px;
+    overflow-y: auto;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.12);
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: #3c4043;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.src-card:hover .src-tooltip { display: block; }
+</style>
+"""
+
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 load_dotenv(BASE_DIR.parent / ".env")
 
+<<<<<<< Updated upstream
 # ── 브랜드 (자유롭게 수정하세요) ─────────────────────────────
 APP_NAME = "KAM Lens"
 APP_TAGLINE = "제약·바이오 감사 RAG · K-IFRS · DART 공시 · 삼일 KAM"
@@ -118,6 +366,35 @@ if _restart:
     st.session_state["messages"] = []
     st.cache_resource.clear()
     st.rerun()
+=======
+st.set_page_config(
+    page_title="회계 챗봇",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+st.markdown(_PAGE_CSS, unsafe_allow_html=True)
+st.markdown("""
+<div style="
+    padding: 18px 0 14px 0;
+    border-bottom: 1.5px solid #e8eaed;
+    margin-bottom: 24px;
+">
+    <div style="
+        font-size: 2.3rem;
+        font-weight: 700;
+        color: #1a1a1a;
+        letter-spacing: -0.03em;
+        line-height: 1.15;
+    ">회계 챗봇</div>
+    <div style="
+        margin-top: 4px;
+        font-size: 12.5px;
+        color: #5f6368;
+        letter-spacing: 0.01em;
+    ">K-IFRS · DART · KAM &nbsp;|&nbsp; 3-Source RAG &nbsp;|&nbsp; 제약·바이오 감사 특화</div>
+</div>
+""", unsafe_allow_html=True)
+>>>>>>> Stashed changes
 
 openai_key = os.getenv("OPENAI_API_KEY", "")
 if not openai_key or openai_key == "your_openai_api_key_here":
@@ -164,6 +441,7 @@ llm = load_llm()
 with st.sidebar:
     st.markdown("#### 상태")
     if dart_retriever is None:
+<<<<<<< Updated upstream
         st.warning("DART 데이터 준비 안 됨")
         st.caption("`python dart_ingest.py` 실행 필요")
     else:
@@ -171,6 +449,16 @@ with st.sidebar:
     st.markdown("#### 이렇게 물어보세요")
     for _ex in EXAMPLES:
         st.caption(f"· {_ex}")
+=======
+        st.warning("DART 데이터가 비어 있습니다.")
+        st.caption("실행 필요: `python dart_ingest.py`")
+    else:
+        st.success("DART 데이터 로드됨")
+
+    if st.button("리트리버 새로고침", use_container_width=True):
+        st.cache_resource.clear()
+        st.rerun()
+>>>>>>> Stashed changes
 
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
@@ -233,63 +521,64 @@ def build_answer(query: str) -> tuple[str, list[dict[str, str]], list[Document],
     return str(response.content), catalog, kifrs_docs, dart_docs, kam_docs
 
 
-def render_catalog(catalog: list[dict[str, str]]) -> None:
-    st.markdown("### 출처 목록")
-    if not catalog:
-        st.caption("출처 없음")
-        return
-    for item in catalog:
-        sid = item.get("sid", "")
+def _trim_to_complete_sentences(text: str, max_chars: int = 500) -> str:
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    chunk = text[:max_chars]
+    matches = list(re.finditer(r'[다요임음\.!?。]\s', chunk))
+    if matches:
+        return chunk[:matches[-1].end()].rstrip()
+    last_period = chunk.rfind('.')
+    if last_period > len(chunk) // 4:
+        return chunk[:last_period + 1]
+    return chunk
+
+
+def _build_cards_html(sids: list[str], catalog_map: dict) -> str:
+    cards = ""
+    for sid in sids:
+        item = catalog_map.get(sid)
+        if not item:
+            continue
         source = item.get("source", "")
         company = item.get("company", "")
         section = item.get("section", "")
         page = item.get("page", "")
-        url = item.get("url", "")
-        parts = [f"**[{sid}]**", source]
-        if company:
-            parts.append(company)
+        content = _trim_to_complete_sentences(item.get("content", "") or "")
+        content_escaped = (
+            content.replace("&", "&amp;")
+                   .replace("<", "&lt;")
+                   .replace(">", "&gt;")
+                   .replace('"', "&quot;")
+        )
+        is_dart = source.upper().startswith("DART")
+        label_parts = [source]
+        if company and not is_dart:
+            label_parts.append(company)
         if section:
-            parts.append(f"섹션:{section}")
-        if page:
-            parts.append(f"p.{page}")
-        st.write(" | ".join(parts))
-        if url:
-            st.markdown(f"- 원문 링크: {url}")
+            label_parts.append(section)
+        if page and not is_dart:
+            label_parts.append(f"p.{page}")
+        label = " | ".join(label_parts)
+        cards += f'<div class="src-card"><div class="src-label">{label}</div><div class="src-tooltip">{content_escaped}</div></div>'
+    return f'<div class="src-cards">{cards}</div>' if cards else ""
 
 
-def _extract_cited_ids(answer: str) -> set[str]:
-    return set(re.findall(r"\[(S\d+)\]", answer))
-
-
-def render_compact_catalog(answer: str, catalog: list[dict[str, str]], limit: int = 6) -> None:
-    cited = _extract_cited_ids(answer)
-    filtered = [x for x in catalog if x.get("sid", "") in cited] if cited else catalog
-    st.markdown("### 핵심 출처")
-    if not filtered:
-        st.caption("핵심 출처를 찾지 못했습니다.")
-        return
-    head = filtered[:limit]
-    tail = filtered[limit:]
-    for item in head:
-        sid = item.get("sid", "")
-        source = item.get("source", "")
-        page = item.get("page", "")
-        section = item.get("section", "")
-        url = item.get("url", "")
-        st.write(f"**[{sid}]** {source} {f'| {section}' if section else ''} {f'| p.{page}' if page else ''}")
-        if url:
-            st.markdown(f"- 원문 링크: {url}")
-    if tail:
-        with st.expander(f"나머지 출처 {len(tail)}건 보기"):
-            for item in tail:
-                sid = item.get("sid", "")
-                source = item.get("source", "")
-                page = item.get("page", "")
-                section = item.get("section", "")
-                url = item.get("url", "")
-                st.write(f"**[{sid}]** {source} {f'| {section}' if section else ''} {f'| p.{page}' if page else ''}")
-                if url:
-                    st.markdown(f"- 원문 링크: {url}")
+def render_answer_with_inline_sources(answer: str, catalog: list[dict]) -> None:
+    catalog_map = {item.get("sid"): item for item in catalog}
+    for para in answer.split('\n\n'):
+        if not para.strip():
+            continue
+        sids = list(dict.fromkeys(re.findall(r'\[(S\d+)\]', para)))
+        clean_para = re.sub(r'\s*\[(S\d+)\]', '', para).strip()
+        if not clean_para:
+            continue
+        st.markdown(clean_para)
+        if sids:
+            cards_html = _build_cards_html(sids, catalog_map)
+            if cards_html:
+                st.markdown(cards_html, unsafe_allow_html=True)
 
 
 # 대화 기록 렌더 (user 오른쪽 / assistant 왼쪽) — 모든 assistant 답변에 핵심 출처 표시
@@ -322,31 +611,6 @@ if query:
             except Exception as e:
                 st.error(f"오류가 발생했습니다: {e}")
                 st.stop()
-        st.markdown(answer)
-        render_compact_catalog(answer, catalog, limit=6)
-        with st.expander("검색된 원문 미리보기"):
-            cols = st.columns(3)
-            data = [("K-IFRS", kifrs_docs), ("DART", dart_docs), ("KAM", kam_docs)]
-            for col, (name, docs) in zip(cols, data):
-                with col:
-                    st.markdown(f"**{name}**")
-                    for d in docs[:5]:
-                        st.caption(str(d.metadata))
-                        st.text(d.page_content[:280] + "...")
-
-        report = (
-            f"# 금융 RAG 답변 보고서\n\n"
-            f"- 생성시각: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-            f"- 질문: {query}\n\n"
-            f"## 답변\n{answer}\n\n"
-            "## 출처 목록\n"
-            + "\n".join([f"- [{x['sid']}] {x['source']} {x.get('url','')}" for x in catalog])
-        )
-        st.download_button(
-            label="보고서 다운로드(.md)",
-            data=report.encode("utf-8"),
-            file_name=f"rag_report_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
-            mime="text/markdown",
-        )
+        render_answer_with_inline_sources(answer, catalog)
 
     st.session_state["messages"].append({"role": "assistant", "content": answer, "catalog": catalog})
