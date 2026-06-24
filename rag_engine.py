@@ -21,11 +21,15 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 try:
-    from langchain.retrievers import ContextualCompressionRetriever
+    from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
     from langchain_community.document_compressors.flashrank_rerank import FlashrankRerank
 except Exception:
-    ContextualCompressionRetriever = None
-    FlashrankRerank = None
+    try:
+        from langchain.retrievers import ContextualCompressionRetriever
+        from langchain_community.document_compressors.flashrank_rerank import FlashrankRerank
+    except Exception:
+        ContextualCompressionRetriever = None
+        FlashrankRerank = None
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
@@ -84,11 +88,11 @@ def _reset_client() -> None:
 K_IFRS_PDFS: list[tuple[str, str]] = [
     ("K-IFRS_제1038호_무형자산.pdf", "K-IFRS_1038"),
     ("K-IFRS_제1115호_수익.pdf", "K-IFRS_1115"),
-    ("K-IFRS_제2032호_무형자산_손상사례_발췌.pdf", "K-IFRS_2032"),
+    ("K-IFRS_제2032호_무형자산_웹사이트 원가.pdf", "K-IFRS_2032"),
 ]
 
 KAM_PDFS: list[tuple[str, str]] = [
-    ("삼일회계법인 제약 바이오 산업 KAM 및 유의사항.pdf", "KAM_2025"),
+    ("삼일회계법인 제약 바이오 산업 KAM 및 대응방안.pdf", "KAM_2025"),
 ]
 
 

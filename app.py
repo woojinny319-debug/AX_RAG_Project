@@ -270,103 +270,6 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 load_dotenv(BASE_DIR.parent / ".env")
 
-<<<<<<< Updated upstream
-# ── 브랜드 (자유롭게 수정하세요) ─────────────────────────────
-APP_NAME = "KAM Lens"
-APP_TAGLINE = "제약·바이오 감사 RAG · K-IFRS · DART 공시 · 삼일 KAM"
-ASSISTANT_INTRO = (
-    "RAG 및 Langchain 기술을 적용하여 만든 학습용 chat-bot 입니다.\n\n"
-    "K-IFRS·DART 공시·삼일 KAM 자료를 근거로, 제약·바이오 기업의 회계·감사 질문에 답해 드려요. "
-    "연구개발비 자산화 금액, 신약 파이프라인, 기업 간 비교 등 무엇이든 물어보세요."
-)
-EXAMPLES = [
-    "삼천당제약 연구개발비 자산화 금액은?",
-    "셀트리온과 한미약품 자산화 정책 비교",
-    "연구개발비를 무형자산으로 공시한 기업 사례",
-]
-
-st.set_page_config(page_title=APP_NAME, layout="centered", initial_sidebar_state="collapsed")
-
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Noto+Serif+KR:wght@600;700&display=swap');
-    #MainMenu, footer {visibility:hidden;}
-    [data-testid="stToolbar"]{display:none;}
-    html, body, [class*="css"], textarea, input { font-family:'Noto Sans KR', sans-serif; }
-    .block-container{ max-width: 880px; padding-top:3rem; padding-bottom:7rem; }
-
-    /* 상단 브랜드 헤더 */
-    .app-header{ display:flex; align-items:center; gap:.6rem; }
-    .app-mark{ width:32px; height:32px; border-radius:9px;
-        background:linear-gradient(135deg,#6FA0DA,#39507D);
-        display:inline-flex; align-items:center; justify-content:center;
-        color:#fff; font-size:.95rem; }
-    .app-name{ font-family:'Noto Serif KR',serif; font-size:1.4rem; font-weight:700; color:#EAF0F8; }
-    .app-tag{ color:#8A98AD; font-size:.85rem; margin:.2rem 0 .9rem 0; }
-    .app-rule{ border-bottom:1px solid #283450; margin-bottom:1.3rem; }
-
-    /* 채팅 — 카톡식: 아바타 말풍선 밖, content에만 배경+여백 */
-    [data-testid="stChatMessage"]{
-        background:transparent; border:none; padding:0;
-        gap:.5rem; align-items:flex-start; width:100%;
-    }
-    /* 봇 아바타: 흰색 박스 + 네이비 아이콘 */
-    [data-testid="stChatMessageAvatarAssistant"]{
-        background:#FFFFFF !important; color:#1B2436 !important;
-        border-radius:8px; margin-top:3px;
-    }
-    /* 유저 아바타: 삭제 */
-    [data-testid="stChatMessageAvatarUser"]{ display:none !important; }
-    /* 말풍선 = content. 내용 크기에 맞게 + Streamlit 기본 중앙정렬(margin auto) 제거 */
-    [data-testid="stChatMessageContent"]{
-        background:#19233A; border:1px solid #243049; border-radius:14px;
-        padding:.85rem 1.15rem;
-        flex:0 1 auto !important; width:fit-content !important; max-width:80%;
-        margin:0 !important;   /* 중앙정렬 해제 → 봇 왼쪽 밀착 */
-    }
-    /* user 메시지: 오른쪽 끝 밀착 + 다른 색 */
-    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]){
-        flex-direction:row-reverse;
-    }
-    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stChatMessageContent"]{
-        background:#2E5984; border-color:#3C6EA5; max-width:74%;
-    }
-
-    /* 입력창 위 힌트 말풍선 */
-    .hint-pill{ display:inline-block; background:#1F2A44; color:#D7E0EE;
-        border:1px solid #30406A; padding:.55rem 1rem; border-radius:14px;
-        font-weight:600; font-size:.92rem; position:relative; margin:.2rem 0 1rem; }
-    .hint-pill:after{ content:""; position:absolute; left:26px; bottom:-7px; width:13px; height:13px;
-        background:#1F2A44; border-right:1px solid #30406A; border-bottom:1px solid #30406A;
-        transform:rotate(45deg); }
-
-    /* 입력창 */
-    [data-testid="stChatInput"]{ background:#19233A; border:1px solid #30406A; border-radius:16px; }
-    [data-testid="stChatInput"] textarea{ color:#E4E9F1; }
-
-    /* 하단 안내 문구 */
-    .disc{ color:#6B7689; font-size:.8rem; margin:.5rem 0 .2rem; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-_hc1, _hc2 = st.columns([5, 1.3], vertical_alignment="center")
-with _hc1:
-    st.markdown(
-        f"<div class='app-header'><span class='app-name'>{APP_NAME}</span></div>"
-        f"<div class='app-tag'>{APP_TAGLINE}</div>",
-        unsafe_allow_html=True,
-    )
-with _hc2:
-    _restart = st.button("다시 시작", use_container_width=True)
-st.markdown("<div class='app-rule'></div>", unsafe_allow_html=True)
-if _restart:
-    st.session_state["messages"] = []
-    st.cache_resource.clear()
-    st.rerun()
-=======
 st.set_page_config(
     page_title="회계 챗봇",
     layout="wide",
@@ -394,7 +297,7 @@ st.markdown("""
     ">K-IFRS · DART · KAM &nbsp;|&nbsp; 3-Source RAG &nbsp;|&nbsp; 제약·바이오 감사 특화</div>
 </div>
 """, unsafe_allow_html=True)
->>>>>>> Stashed changes
+
 
 openai_key = os.getenv("OPENAI_API_KEY", "")
 if not openai_key or openai_key == "your_openai_api_key_here":
@@ -441,15 +344,6 @@ llm = load_llm()
 with st.sidebar:
     st.markdown("#### 상태")
     if dart_retriever is None:
-<<<<<<< Updated upstream
-        st.warning("DART 데이터 준비 안 됨")
-        st.caption("`python dart_ingest.py` 실행 필요")
-    else:
-        st.markdown("DART 공시 연결됨")
-    st.markdown("#### 이렇게 물어보세요")
-    for _ex in EXAMPLES:
-        st.caption(f"· {_ex}")
-=======
         st.warning("DART 데이터가 비어 있습니다.")
         st.caption("실행 필요: `python dart_ingest.py`")
     else:
@@ -458,7 +352,6 @@ with st.sidebar:
     if st.button("리트리버 새로고침", use_container_width=True):
         st.cache_resource.clear()
         st.rerun()
->>>>>>> Stashed changes
 
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
@@ -581,22 +474,9 @@ def render_answer_with_inline_sources(answer: str, catalog: list[dict]) -> None:
                 st.markdown(cards_html, unsafe_allow_html=True)
 
 
-# 대화 기록 렌더 (user 오른쪽 / assistant 왼쪽) — 모든 assistant 답변에 핵심 출처 표시
 for m in st.session_state["messages"]:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
-        if m["role"] == "assistant" and m.get("catalog"):
-            render_compact_catalog(m["content"], m["catalog"])
-
-# 대화 시작 전: 환영 메시지 + 입력 유도 힌트
-if not st.session_state["messages"]:
-    with st.chat_message("assistant"):
-        st.markdown(ASSISTANT_INTRO)
-    st.markdown(
-        f"<div class='hint-pill'>{APP_NAME}가 무엇을 답해줄 수 있는지 물어보세요</div>"
-        "<div class='disc'>AI는 한정된 데이터에 기반하니, 중요한 정보는 추가 확인을 권장해요.</div>",
-        unsafe_allow_html=True,
-    )
 
 query = st.chat_input("AI에게 질문해 주세요.")
 if query:
@@ -613,4 +493,4 @@ if query:
                 st.stop()
         render_answer_with_inline_sources(answer, catalog)
 
-    st.session_state["messages"].append({"role": "assistant", "content": answer, "catalog": catalog})
+    st.session_state["messages"].append({"role": "assistant", "content": answer})
