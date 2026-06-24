@@ -480,29 +480,8 @@ def get_kifrs_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever:
         _make_retriever(collection, embeddings, docs_to_ingest=_chunk(raw))
         print(f"[OK] KIFRS 초기화 완료: {len(raw)}개 문서")
     
-<<<<<<< Updated upstream
     # 리트리버 로드 (_load_all_docs가 워밍업+재시도로 cold-start HNSW 오류를 처리. reset 없음)
     return _make_retriever(collection, embeddings)
-=======
-    # 리트리버 로드 시도
-    try:
-        return _make_retriever(collection, embeddings)
-    except Exception as e:
-        msg = str(e).lower()
-        if "error loading hnsw index" in msg or "constructing hnsw segment reader" in msg or "backfill" in msg:
-            print("[!] KIFRS HNSW 인덱스 손상 감지")
-            print("[복구] KIFRS 컬렉션 재생성 중...")
-            _reset_collection(collection)
-            raw: list[Document] = []
-            for filename, source_id in K_IFRS_PDFS:
-                p = PROJECT_ROOT / filename
-                if p.exists():
-                    raw.extend(_load_pdf(p, source_id))
-            _make_retriever(collection, embeddings, docs_to_ingest=_chunk(raw))
-            print("[OK] KIFRS 복구 완료")
-            return _make_retriever(collection, embeddings)
-        raise
->>>>>>> Stashed changes
 
 
 def get_kam_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever:
@@ -519,29 +498,8 @@ def get_kam_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever:
         _make_retriever(collection, embeddings, docs_to_ingest=_chunk(raw))
         print(f"[OK] KAM 초기화 완료: {len(raw)}개 문서")
     
-<<<<<<< Updated upstream
     # 리트리버 로드 (_load_all_docs가 워밍업+재시도로 cold-start HNSW 오류를 처리. reset 없음)
     return _make_retriever(collection, embeddings)
-=======
-    # 리트리버 로드 시도
-    try:
-        return _make_retriever(collection, embeddings)
-    except Exception as e:
-        msg = str(e).lower()
-        if "error loading hnsw index" in msg or "constructing hnsw segment reader" in msg or "backfill" in msg:
-            print("[!] KAM HNSW 인덱스 손상 감지")
-            print("[복구] KAM 컬렉션 재생성 중...")
-            _reset_collection(collection)
-            raw: list[Document] = []
-            for filename, source_id in KAM_PDFS:
-                p = PROJECT_ROOT / filename
-                if p.exists():
-                    raw.extend(_load_pdf(p, source_id))
-            _make_retriever(collection, embeddings, docs_to_ingest=_chunk(raw))
-            print("[OK] KAM 복구 완료")
-            return _make_retriever(collection, embeddings)
-        raise
->>>>>>> Stashed changes
 
 
 def get_dart_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever | None:
@@ -553,7 +511,6 @@ def get_dart_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever | None:
         print(f"[info] DART 컬렉션이 없습니다. 초기화 필요: python dart_ingest.py 실행")
         return None
     
-<<<<<<< Updated upstream
     # Step 2: 컬렉션 로드 시도 (HNSW 에러는 _load_all_docs가 재시도로 처리)
     # [중요] 과거엔 HNSW 에러 시 _reset_collection으로 컬렉션을 삭제했는데, 이는 일시적
     # backfill 오류에도 데이터를 영구 삭제하는 치명적 동작이었다. 이제 삭제하지 않고
@@ -561,11 +518,11 @@ def get_dart_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever | None:
     # BM25 코퍼스: 안정적인 사이드카 파일 우선, 없으면 chroma full-get으로 fallback
     bm25_docs = _load_dart_bm25_sidecar()
     if bm25_docs is not None:
-        print(f"[✓] DART BM25 사이드카 로드: {len(bm25_docs)}개 문서")
+        print(f"[OK] DART BM25 사이드카 로드: {len(bm25_docs)}개 문서")
     else:
         try:
             bm25_docs = _load_all_docs(collection)
-            print(f"[✓] DART 리트리버 로드 성공(chroma): {len(bm25_docs)}개 문서")
+            print(f"[OK] DART 리트리버 로드 성공(chroma): {len(bm25_docs)}개 문서")
         except Exception as e:
             msg = str(e).lower()
             if "hnsw" in msg or "constructing hnsw segment reader" in msg or "backfill" in msg or "compactor" in msg:
@@ -575,29 +532,11 @@ def get_dart_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever | None:
             else:
                 print(f"[ERROR] DART 로드 중 예기치 않은 에러: {e}")
                 raise
-=======
-    # Step 2: 컬렉션 로드 시도 (HNSW 에러 감지 및 복구)
-    try:
-        bm25_docs = _load_all_docs(collection)
-        print(f"[OK] DART 리트리버 로드 성공: {len(bm25_docs)}개 문서")
-    except Exception as e:
-        msg = str(e).lower()
-        if "error loading hnsw index" in msg or "constructing hnsw segment reader" in msg or "backfill" in msg:
-            print(f"[!] DART HNSW 인덱스 손상 감지: {str(e)[:80]}")
-            print(f"[복구] DART 컬렉션 재생성 중...")
-            _reset_collection(collection)
-            print(f"[OK] DART 컬렉션 초기화 완료. 재실행 필요: python dart_ingest.py")
-            return None
-        else:
-            print(f"[ERROR] DART 로드 중 예기치 않은 에러: {e}")
-            raise
->>>>>>> Stashed changes
 
     if not bm25_docs:
         print("[info] DART 컬렉션이 비어있습니다.")
         return None
 
-<<<<<<< Updated upstream
     # Step 3: 리트리버 생성 (직접 chromadb 쿼리 기반 — langchain Chroma store 불필요)
     from langchain_community.retrievers import BM25Retriever
     global_bm25 = BM25Retriever.from_documents(_enrich(bm25_docs), k=30)
@@ -607,41 +546,5 @@ def get_dart_retriever(embeddings: OpenAIEmbeddings) -> BaseRetriever | None:
         global_bm25_docs=bm25_docs,
         global_bm25_retriever=global_bm25,
     )
-    print("[✓] DART 하이브리드 리트리버 생성 완료")
+    print("[OK] DART 하이브리드 리트리버 생성 완료")
     return _build_2stage(base, rerank_top_n=10)
-=======
-    # Step 3: 리트리버 생성
-    try:
-        store = Chroma(collection_name=collection, embedding_function=embeddings, persist_directory=CHROMA_DIR)
-        
-        from langchain_community.retrievers import BM25Retriever
-        enriched_bm25_docs = []
-        for d in bm25_docs:
-            company = d.metadata.get("company", "")
-            year = d.metadata.get("year", "")
-            section = d.metadata.get("section", "")
-            prefix = f"[{company} {year}년 {section}] " if company else ""
-            enriched_bm25_docs.append(Document(page_content=prefix + (d.page_content or ""), metadata=d.metadata))
-        
-        global_bm25 = BM25Retriever.from_documents(enriched_bm25_docs, k=30)
-        
-        base = DynamicDartRetriever(
-            store=store, 
-            global_bm25_docs=bm25_docs, 
-            global_bm25_retriever=global_bm25
-        )
-        print("[OK] DART 하이브리드 리트리버 생성 완료")
-        return _build_2stage(base, rerank_top_n=10)
-        
-    except Exception as e:
-        msg = str(e).lower()
-        if "error loading hnsw index" in msg or "constructing hnsw segment reader" in msg or "backfill" in msg:
-            print(f"[!] DART 리트리버 생성 중 HNSW 에러 발생")
-            print(f"[복구] DART 컬렉션 재생성 중...")
-            _reset_collection(collection)
-            print(f"[OK] DART 컬렉션 초기화 완료. 재실행 필요: python dart_ingest.py")
-            return None
-        else:
-            print(f"[ERROR] DART 리트리버 생성 중 예기치 않은 에러: {e}")
-            raise
->>>>>>> Stashed changes
