@@ -1,4 +1,4 @@
-# RAG Chatbot — K-IFRS 회계처리 AI 어시스턴트
+# AuditGPT; AI Chatbot — K-IFRS 회계처리 AI 어시스턴트
 
 감사인을 위한 RAG 기반 회계처리 질의응답 챗봇입니다.  
 K-IFRS 기준서, DART 기업 공시, 삼일회계법인 핵심감사사항(KAM) 보고서를 동시에 검색하여 답변합니다.
