@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 import time
@@ -37,7 +38,7 @@ html, body, .stApp, .main, [data-testid="stAppViewContainer"] {
 
 /* ── 콘텐츠 폭·여백 ── */
 .block-container {
-    max-width: 100% !important;
+    max-width: 70% !important;
     padding: 2.5rem 5vw 7rem 5vw !important;
 }
 
@@ -77,24 +78,31 @@ h1 {
 }
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"])
   [data-testid="stChatMessageContent"] {
-    background: #d6eeff !important;
+    background: #e3f4ff !important;
     border: none !important;
     border-radius: 22px !important;
-    padding: 28px 28px !important;
+    padding: 12px 18px !important;
     width: fit-content !important;
-    max-width: 70% !important;
+    max-width: 65% !important;
+    margin-left: auto !important; /* 블록 요소 정렬을 우측 끝으로 밀어내어 해결 */
     font-size: 15px !important;
     font-weight: 400 !important;
-    line-height: 1.65 !important;
+    line-height: 1.4 !important;
     color: #1f1f1f !important;
-    text-align: left !important;
     box-shadow: 0 1px 6px rgba(0,0,0,0.07) !important;
     display: flex !important;
     align-items: center !important;
+    justify-content: center !important;
+}
+/* 말풍선 내부의 모든 기본 마진/패딩 제거 및 가로너비 수축 강제 */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"])
+  [data-testid="stChatMessageContent"] * {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: fit-content !important; /* 마크다운 컨테이너들이 100% 늘어나는 현상 방지 */
 }
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"])
   [data-testid="stChatMessageContent"] p {
-    margin: 0 !important;
     text-align: left !important;
 }
 
@@ -110,7 +118,7 @@ h1 {
     background: transparent !important;
     border: none !important;
     max-width: 88% !important;
-    font-size: 15px !important;
+    font-size: 13px !important;
     line-height: 1.9 !important;
     color: #1f1f1f !important;
 }
@@ -123,21 +131,21 @@ h1 {
 /* 헤딩 스타일 */
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])
   [data-testid="stChatMessageContent"] h1 {
-    font-size: 20px !important;
+    font-size: 18px !important;
     font-weight: 700 !important;
     color: #1f1f1f !important;
     margin: 1.2em 0 0.4em 0 !important;
 }
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])
   [data-testid="stChatMessageContent"] h2 {
-    font-size: 18px !important;
+    font-size: 16px !important;
     font-weight: 600 !important;
     color: #1f1f1f !important;
     margin: 1.1em 0 0.35em 0 !important;
 }
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])
   [data-testid="stChatMessageContent"] h3 {
-    font-size: 22.5px !important;
+    font-size: 20.5px !important;
     font-weight: 600 !important;
     color: #1f1f1f !important;
     margin: 1em 0 0.3em 0 !important;
@@ -160,17 +168,49 @@ h1 {
 /* ═══════════════════════════════════════
    입력창 — Gemini 스타일 pill
 ═══════════════════════════════════════ */
-[data-testid="stBottom"] {
+[data-testid="stBottom"],
+[data-testid="stBottom"] > *,
+[data-testid="stBottom"] > * > *,
+[data-testid="stBottomBlockContainer"],
+[data-testid="stBottomBlockContainer"] > *,
+section[data-testid="stBottom"] {
     background: #ffffff !important;
     border-top: none !important;
-    padding: 0 5vw 16px 5vw !important;
+}
+[data-testid="stBottom"] {
+    max-width: 1000px !important;
+    margin: 0 auto !important;
+    padding: 0 20px 16px 20px !important;
+    left: 0 !important;
+    right: 0 !important;
 }
 [data-testid="stChatInput"] {
-    border-radius: 28px !important;
+    border-radius: 30px !important;
     border: 1px solid #dde3ea !important;
     box-shadow: 0 2px 12px rgba(0,0,0,0.08) !important;
     background: #f0f4f9 !important;
     overflow: hidden !important;
+}
+/* 질문 입력창 내부 전송(화살표) 버튼 커스텀 */
+[data-testid="stChatInput"] button {
+    transition: background-color 0.2s, color 0.2s;
+}
+[data-testid="stChatInput"] button:not(:disabled) {
+    background-color: #c2e7ff !important; /* 구글/Gemini 스타일 파스텔톤 블루 */
+}
+[data-testid="stChatInput"] button:not(:disabled):hover {
+    background-color: #a8d7ff !important; /* 호버 시 다소 짙은 파스텔 블루 */
+}
+[data-testid="stChatInput"] button:not(:disabled) svg {
+    color: #004a77 !important; /* 아이콘을 짙은 블루로 대비감 주기 */
+    fill: #004a77 !important;
+}
+[data-testid="stChatInput"] button:disabled {
+    background-color: transparent !important;
+}
+[data-testid="stChatInput"] button:disabled svg {
+    color: #9aa0a6 !important;
+    fill: #9aa0a6 !important;
 }
 [data-testid="stChatInput"] textarea {
     border: none !important;
@@ -190,21 +230,27 @@ h1 {
     box-shadow: none !important;
     border: none !important;
 }
-[data-testid="stChatInput"]:focus-within,
-[data-testid="stChatInputContainer"]:focus-within {
+[data-testid="stChatInput"]:focus-within {
     outline: none !important;
     border-color: #dde3ea !important;
     box-shadow: 0 2px 12px rgba(0,0,0,0.08) !important;
 }
-/* 빨간 테두리 완전 제거 — 모든 하위 요소 */
+/* stChatInputContainer의 자체 테두리 제거 (둥근 모서리 뒤로 삐져나오는 청색 테두리 방지) */
+[data-testid="stChatInputContainer"] {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+[data-testid="stChatInputContainer"]:focus-within {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+/* 포커스 시 생기는 모든 기본 아웃라인 및 강조 테두리 제거 */
 [data-testid="stChatInput"] *,
 [data-testid="stChatInput"] *:focus,
 [data-testid="stChatInput"] *:focus-visible,
 [data-testid="stChatInput"] *:focus-within,
-[data-testid="stChatInputContainer"],
-[data-testid="stChatInputContainer"]:focus,
-[data-testid="stChatInputContainer"]:focus-visible,
-[data-testid="stChatInputContainer"]:focus-within,
 [data-testid="stChatInputContainer"] *,
 [data-testid="stChatInputContainer"] *:focus,
 [data-testid="stChatInputContainer"] *:focus-visible {
@@ -212,13 +258,14 @@ h1 {
     box-shadow: none !important;
     border-color: transparent !important;
 }
-/* Streamlit 테마 accent 색상으로 인한 border 억제 */
+/* Streamlit 내장 div의 포커스 보더 억제 */
 [data-testid="stChatInput"] div:focus-within,
 [data-testid="stChatInput"] div:focus {
     border: none !important;
     outline: none !important;
     box-shadow: none !important;
 }
+
 
 /* ═══════════════════════════════════════
    출처 박스
@@ -270,25 +317,46 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 load_dotenv(BASE_DIR.parent / ".env")
 
+
+def get_image_base64(img_path):
+    try:
+        with open(img_path, "rb") as image_file:
+            return base64.b64encode(image_file.read()).decode("utf-8")
+    except Exception:
+        return ""
+
+
 st.set_page_config(
-    page_title="회계 챗봇",
+    page_title="AuditGPT",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 st.markdown(_PAGE_CSS, unsafe_allow_html=True)
-st.markdown("""
+# logo.png가 프로젝트 루트 폴더에 있다고 가정하고 base64 변환
+logo_base64 = get_image_base64("logo.png")
+if logo_base64:
+    logo_html = f'<img src="data:image/png;base64,{logo_base64}" style="height: 2.3rem; width: auto; margin-right: 12px; vertical-align: middle;">'
+else:
+    logo_html = ""
+
+st.markdown(f"""
 <div style="
     padding: 18px 0 14px 0;
     border-bottom: 1.5px solid #e8eaed;
     margin-bottom: 24px;
 ">
     <div style="
+        display: flex;
+        align-items: center; /* 로고와 글씨의 세로축 정렬 */
         font-size: 2.3rem;
         font-weight: 700;
         color: #1a1a1a;
         letter-spacing: -0.03em;
         line-height: 1.15;
-    ">회계 챗봇</div>
+    ">
+        {logo_html}
+        <span>AuditGPT</span>
+    </div>
     <div style="
         margin-top: 4px;
         font-size: 12.5px;
@@ -330,7 +398,6 @@ def load_llm() -> ChatOpenAI:
 
 @st.cache_resource(show_spinner="DART 로딩 중...")
 def load_dart(emb: OpenAIEmbeddings) -> BaseRetriever | None:
-    """DART 리트리버 캐시 (파괴적 reset 제거로 안전하게 캐시 가능). 갱신은 '다시 시작' 버튼이 캐시 클리어."""
     return get_dart_retriever(emb)
 
 
@@ -485,7 +552,7 @@ if query:
         st.markdown(query)
 
     with st.chat_message("assistant"):
-        with st.spinner("근거 검색 및 답변 생성 중..."):
+        with st.spinner("Finding sources & generating answer..."):
             try:
                 answer, catalog, kifrs_docs, dart_docs, kam_docs = build_answer(query)
             except Exception as e:

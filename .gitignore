@@ -10,6 +10,9 @@ chroma_db_v2/
 # 임베딩/BM25 백업 (대용량, 재생성 가능): dart_data.pkl(174MB), dart_bm25.pkl(37MB)
 *.pkl
 
+# 가상환경 (재생성 가능: python -m venv venv)
+venv/
+
 # Python 캐시
 __pycache__/
 *.py[cod]

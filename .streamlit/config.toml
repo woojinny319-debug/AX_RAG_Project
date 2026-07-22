@@ -1,8 +1,8 @@
-# 차분한 다크 네이비 테마 (침착·전문)
+# 구글/Gemini 스타일 라이트 테마
 [theme]
-base = "dark"
-primaryColor = "#6FA0DA"            # 차분한 azure 포인트
-backgroundColor = "#0F1826"         # 딥 네이비 배경
-secondaryBackgroundColor = "#19233A" # 카드·말풍선·사이드바
-textColor = "#E4E9F1"               # 소프트 오프화이트
+base = "light"
+primaryColor = "#1a73e8"            # 구글 블루 포인트
+backgroundColor = "#ffffff"         # 완전 흰색 배경
+secondaryBackgroundColor = "#f0f4f9" # 밝은 회청색 (말풍선, 사이드바 등)
+textColor = "#1f1f1f"               # 짙은 차콜 회색 텍스트
 font = "sans serif"
